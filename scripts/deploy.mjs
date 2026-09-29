@@ -1,0 +1,15 @@
+import './compile.mjs';
+import fs from 'node:fs';
+import {ContractFactory,JsonRpcProvider,parseEther} from 'ethers';
+const provider = new JsonRpcProvider('http://127.0.0.1:8545');
+if((await provider.getNetwork()).chainId !== 1337n) throw new Error('Local chain 1337 required');
+const accounts = await provider.listAccounts();
+const owners = await Promise.all(accounts.slice(0,3).map(s=>s.getAddress()));
+const artifact = JSON.parse(fs.readFileSync('artifacts/Treasury.json','utf8'));
+const treasury = await new ContractFactory(artifact.abi,artifact.bytecode,accounts[0]).deploy(owners,2,parseEther('1'),15);
+await treasury.waitForDeployment();
+const address = await treasury.getAddress();
+await (await accounts[0].sendTransaction({to:address,value:parseEther('5')})).wait();
+fs.mkdirSync('public',{recursive:true});
+fs.writeFileSync('public/deployment.json',JSON.stringify({address,chainId:1337,owners,recipient:await accounts[4].getAddress(),abi:artifact.abi},null,2));
+console.log('Treasury:',address,'\n2-of-3, limit 1 ETH, delay 15 seconds, balance 5 test ETH');

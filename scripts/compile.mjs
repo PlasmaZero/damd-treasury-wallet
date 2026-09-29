@@ -1,0 +1,10 @@
+import fs from 'node:fs';
+import solc from 'solc';
+const input = {language:'Solidity',sources:{'Treasury.sol':{content:fs.readFileSync('contracts/Treasury.sol','utf8')}},settings:{evmVersion:'shanghai',optimizer:{enabled:true,runs:200},outputSelection:{'*':{'*':['abi','evm.bytecode.object']}}}};
+const output = JSON.parse(solc.compile(JSON.stringify(input)));
+const errors = (output.errors || []).filter(e => e.severity === 'error');
+if(errors.length) throw new Error(errors.map(e => e.formattedMessage).join('\n'));
+const c = output.contracts['Treasury.sol'].Treasury;
+fs.mkdirSync('artifacts',{recursive:true});
+fs.writeFileSync('artifacts/Treasury.json',JSON.stringify({abi:c.abi,bytecode:'0x'+c.evm.bytecode.object},null,2));
+console.log('Treasury compiled with solc',solc.version());
