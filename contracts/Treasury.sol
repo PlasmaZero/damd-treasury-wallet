@@ -6,7 +6,7 @@ pragma solidity 0.8.30;
 contract Treasury {
     address[] public owners;
     mapping(address => bool) public isOwner;
-    uint256 public immutable threshold;
+    uint256 public constant APPROVAL_PERCENT = 70;
     uint256 public immutable spendingLimit;
     uint256 public immutable delaySeconds;
     struct Payment {
@@ -29,9 +29,8 @@ contract Treasury {
     modifier onlyOwner() { require(isOwner[msg.sender], "Owner only"); _; }
     modifier nonReentrant() { require(!entered, "Reentrant call"); entered = true; _; entered = false; }
 
-    constructor(address[] memory initialOwners, uint256 requiredApprovals, uint256 limit, uint256 delay) {
+    constructor(address[] memory initialOwners, uint256 limit, uint256 delay) {
         require(initialOwners.length >= 2 && initialOwners.length <= 20, "Owner count 2-20");
-        require(requiredApprovals >= 2 && requiredApprovals <= initialOwners.length, "Invalid threshold");
         require(limit > 0 && delay > 0, "Invalid policy");
         for (uint256 i; i < initialOwners.length; ++i) {
             address owner = initialOwners[i];
@@ -39,12 +38,18 @@ contract Treasury {
             isOwner[owner] = true;
             owners.push(owner);
         }
-        threshold = requiredApprovals;
         spendingLimit = limit;
         delaySeconds = delay;
     }
     receive() external payable { emit Deposited(msg.sender, msg.value); }
     function ownerCount() external view returns (uint256) { return owners.length; }
+    /// Required approvals: max(floor(70% of owners), floor(owners / 2) + 1), recomputed from the current owner count.
+    function threshold() public view returns (uint256) {
+        uint256 n = owners.length;
+        uint256 percent = n * APPROVAL_PERCENT / 100;
+        uint256 majority = n / 2 + 1;
+        return percent > majority ? percent : majority;
+    }
     function paymentCount() external view returns (uint256) { return payments.length; }
     function propose(address payable recipient, uint256 amount) external onlyOwner returns (uint256 id) {
         require(recipient != address(0) && recipient != address(this), "Invalid recipient");
@@ -60,7 +65,7 @@ contract Treasury {
         approved[id][msg.sender] = true;
         ++p.approvals;
         emit PaymentApproved(id, msg.sender, p.approvals);
-        if (p.approvals == threshold) {
+        if (p.approvals >= threshold() && p.readyAt == 0) {
             p.readyAt = block.timestamp + delaySeconds;
             emit PaymentQueued(id, p.readyAt);
         }
@@ -69,8 +74,8 @@ contract Treasury {
         require(id < payments.length, "Unknown payment");
         Payment storage p = payments[id];
         require(!p.executed, "Already executed");
-        require(p.approvals >= threshold, "More approvals needed");
-        require(block.timestamp >= p.readyAt, "Timelock active");
+        require(p.approvals >= threshold(), "More approvals needed");
+        require(p.readyAt != 0 && block.timestamp >= p.readyAt, "Timelock active");
         require(p.amount <= spendingLimit, "Above spending limit");
         require(address(this).balance >= p.amount, "Insufficient treasury balance");
         p.executed = true;

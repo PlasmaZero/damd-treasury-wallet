@@ -20,14 +20,22 @@ function App() {
       const refresh = async () => { try { const d = await s.snapshot(); if (alive) setData(d); } catch (e) { if (alive) setStatus(e.message); } };
       await refresh(); if (alive) { setStatus('Local treasury ready'); timer = setInterval(refresh, 4000); }
     }).catch(e => { if (alive) setStatus(e.message); });
+     
     const reset = () => { setAccount(''); setStatus('Wallet changed. Connect again before signing.'); };
     window.ethereum?.on('accountsChanged', reset); window.ethereum?.on('chainChanged', reset);
+    
     return () => { alive = false; clearInterval(timer); window.ethereum?.removeListener('accountsChanged', reset); window.ethereum?.removeListener('chainChanged', reset); };
   }, []);
 
   async function action(label, fn) {
     setBusy(true); setStatus(`${label}: waiting for wallet approval...`);
-    try { const tx = await fn(); setStatus(`${label}: submitted ${tx.hash}. Waiting for confirmation...`); const receipt = await tx.wait(); if (receipt.status !== 1) throw new Error('Transaction reverted'); setData(await service.snapshot()); setStatus(`${label}: confirmed in block ${receipt.blockNumber}`); }
+    try { 
+      const tx = await fn(); 
+      setStatus(`${label}: submitted ${tx.hash}. Waiting for confirmation...`); 
+      const receipt = await tx.wait(); 
+      if (receipt.status !== 1) throw new Error('Transaction reverted'); 
+      setData(await service.snapshot()); setStatus(`${label}: confirmed in block ${receipt.blockNumber}`); 
+    }
     catch (e) { setStatus(`${label} failed: ${e.shortMessage || e.message}`); } finally { setBusy(false); }
   }
 
@@ -40,7 +48,7 @@ function App() {
       h('button', { disabled: busy || !service, onClick: connect }, account ? short(account) : 'Connect MetaMask')),
     h('p', { className: 'status', role: 'status', 'aria-live': 'polite' }, status),
     data && h(React.Fragment, null,
-      h('section', { className: 'metrics' }, ...[[data.balance + ' ETH', 'Treasury balance'], [data.threshold + ' of 3', 'Required approvals'], [data.limit + ' ETH', 'Per-payment limit'], [data.delay + ' sec', 'Delay after threshold']].map(([v, l]) => h('div', { key: l }, h('strong', null, v), h('span', null, l)))),
+      h('section', { className: 'metrics' }, ...[[data.balance + ' ETH', 'Treasury balance'], [`${data.threshold} of ${data.ownerCount}`, 'Required approvals'], [data.limit + ' ETH', 'Per-payment limit'], [data.delay + ' sec', 'Delay after threshold']].map(([v, l]) => h('div', { key: l }, h('strong', null, v), h('span', null, l)))),
       h('p', { className: 'address' }, 'Contract: ' + service.config.address),
       h('p', null, 'Connected role: ' + (account ? (owner ? 'Owner' : 'Viewer / depositor') : 'Read only')),
       h('section', { className: 'forms' },
@@ -49,7 +57,7 @@ function App() {
       h('section', null, h('h2', null, 'Payments and approval history'), data.payments.length === 0 ? h('p', null, 'No payment proposals yet.') : h('div', { className: 'tablewrap' }, h('table', null,
         h('thead', null, h('tr', null, ...['ID / recipient', 'Amount', 'Approvals', 'State', 'Actions'].map(x => h('th', { key: x }, x)))),
         h('tbody', null, ...data.payments.map(p => {
-          const state = p.executed ? 'Executed' : p.approvals < data.threshold ? 'Awaiting approvals' : data.timestamp < p.readyAt ? 'Timelocked' : 'Ready';
+          const state = p.executed ? 'Executed' : p.approvals < data.threshold || !p.readyAt ? 'Awaiting approvals' : data.timestamp < p.readyAt ? 'Timelocked' : 'Ready';
           const voted = p.approvers.some(a => a.toLowerCase() === account.toLowerCase());
           return h('tr', { key: p.id }, h('td', { title: p.recipient }, '#' + p.id + ' / ' + short(p.recipient)), h('td', null, p.amount + ' ETH'), h('td', { title: p.approvers.join('\n') || 'No approvals' }, p.approvals + ' / ' + data.threshold), h('td', null, state, p.readyAt > 0 && !p.executed && h('small', null, 'Unlock: ' + new Date(p.readyAt * 1000).toLocaleTimeString())), h('td', null, h('button', { disabled: busy || !owner || voted || p.executed, onClick: () => action('Approve', () => service.approve(p.id)) }, voted ? 'Approved' : 'Approve'), h('button', { disabled: busy || !owner || state !== 'Ready', onClick: () => action('Execute', () => service.execute(p.id)) }, 'Execute')));
         }))))),

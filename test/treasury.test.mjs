@@ -14,7 +14,7 @@ async function setup(t) {
   const signers = await Promise.all([0, 1, 2, 3, 4].map(i => provider.getSigner(i)));
   const owners = await Promise.all(signers.slice(0, 3).map(s => s.getAddress()));
   const factory = new ContractFactory(artifact.abi, artifact.bytecode, signers[0]);
-  const c = await factory.deploy(owners, 2, parseEther('1'), 15); await c.waitForDeployment();
+  const c = await factory.deploy(owners, parseEther('1'), 15); await c.waitForDeployment();
   const address = await c.getAddress(), recipient = await signers[4].getAddress();
   const send = async p => (await p).wait();
   const fund = () => send(signers[0].sendTransaction({ to: address, value: parseEther('5') }));
@@ -24,9 +24,18 @@ async function setup(t) {
   return { rpc, provider, signers, owners, factory, c, address, recipient, send, fund, propose, approve, advance };
 }
 
-test('constructor rejects duplicate, zero and one-vote policies', async t => {
+test('constructor rejects duplicate, zero and single-owner lists', async t => {
   const { factory, owners } = await setup(t);
-  for (const [list, n] of [[[owners[0], owners[0]], 2], [[ZeroAddress, owners[1]], 2], [owners, 1], [owners, 4]]) await assert.rejects(factory.deploy(list, n, 1n, 15));
+  for (const list of [[owners[0], owners[0]], [ZeroAddress, owners[1]], [owners[0]]]) await assert.rejects(factory.deploy(list, 1n, 15));
+});
+
+test('threshold is max(floor(70%), majority)', async t => {
+  const { factory, signers } = await setup(t);
+  const all = await Promise.all(signers.map(s => s.getAddress()));
+  for (const [n, want] of [[2, 2n], [3, 2n], [4, 3n], [5, 3n]]) {
+    const c = await factory.deploy(all.slice(0, n), parseEther('1'), 15); await c.waitForDeployment();
+    assert.equal(await c.threshold(), want);
+  }
 });
 
 test('deposit changes balance and emits a deposit event', async t => {

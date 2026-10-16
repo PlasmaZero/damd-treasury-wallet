@@ -4,10 +4,12 @@ export async function createService() {
 
   const response = await fetch('/deployment.json');
   if (!response.ok) throw new Error('Run npm run chain and npm run deploy first, then reload.');
+
   const config = await response.json();
   const reader = new JsonRpcProvider('http://127.0.0.1:8545', 1337, { cacheTimeout: 0 });
   if ((await reader.getNetwork()).chainId !== 1337n) throw new Error('Wrong RPC network');
   if (await reader.getCode(config.address) === '0x') throw new Error('Contract missing. Run npm run deploy after restarting the chain.');
+  
   const contract = new Contract(config.address, config.abi, reader);
   let signer = null;
 
@@ -29,13 +31,13 @@ export async function createService() {
     config, connect,
 
     async snapshot() {
-      const [balance, threshold, limit, delay, count, block] = await Promise.all([reader.getBalance(config.address), contract.threshold(), contract.spendingLimit(), contract.delaySeconds(), contract.paymentCount(), reader.getBlock('latest')]);
+      const [balance, threshold, ownerCount, limit, delay, count, block] = await Promise.all([reader.getBalance(config.address), contract.threshold(), contract.ownerCount(), contract.spendingLimit(), contract.delaySeconds(), contract.paymentCount(), reader.getBlock('latest')]);
       const payments = await Promise.all(Array.from({ length: Number(count) }, async (_, id) => {
         const p = await contract.payments(id);
         const votes = await Promise.all(config.owners.map(owner => contract.approved(id, owner)));
         return { id, recipient: p.recipient, amount: formatEther(p.amount), approvals: Number(p.approvals), readyAt: Number(p.readyAt), executed: p.executed, approvers: config.owners.filter((_, i) => votes[i]) };
       }));
-      return { balance: formatEther(balance), threshold: Number(threshold), limit: formatEther(limit), delay: Number(delay), timestamp: block.timestamp, payments };
+      return { balance: formatEther(balance), threshold: Number(threshold), ownerCount: Number(ownerCount), limit: formatEther(limit), delay: Number(delay), timestamp: block.timestamp, payments };
     },
 
     async deposit(amount) {
@@ -48,7 +50,7 @@ export async function createService() {
       if (!isAddress(recipient)) throw new Error('Enter a valid Ethereum address');
       return write('propose', recipient, parseEther(amount));
     },
-    
+
     approve: id => write('approve', id), execute: id => write('execute', id)
   };
 }
