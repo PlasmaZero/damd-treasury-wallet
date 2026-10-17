@@ -14,5 +14,5 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {"ethers": "6.17.0", "react": "19.1.1", "react-dom": "19.1.1"},
-  "devDependencies": {"vite": "7.1.7", "solc": "0.8.30", "ganache": "7.9.2", "eslint": "9.36.0", "@eslint/js": "9.36.0", "globals": "16.4.0"}
+  "devDependencies": {"vite": "7.1.7", "solc": "0.8.24", "ganache": "7.9.2", "eslint": "9.36.0", "@eslint/js": "9.36.0", "globals": "16.4.0"}
 }
