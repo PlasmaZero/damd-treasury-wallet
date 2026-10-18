@@ -1,0 +1,830 @@
+PROJECT CONTEXT v2: Multi-Signature Treasury Wallet with Social Recovery
+Team DAMD - CSE 416 (course project option 8.14)
+Updated: 2026-10-15 (after Milestone 1, Milestone 2, and Milestone 2 feedback)
+
+Supersedes: multisig_treasury_wallet_context.txt (v1)
+Purpose: single source of truth for writing MVP user stories and implementation tasks for
+Milestone 3 onward. Where this file and older milestone docs disagree, this file wins.
+
+==================================================
+0. HOW TO READ THIS FILE
+==================================================
+
+Status tags used throughout:
+  [BUILT]     exists in the repo today (Milestone 2 prototype)
+  [MVP]       must exist for the end-of-semester MVP
+  [SHOULD]    planned for MVP if time allows; stories can be written but are lower priority
+  [STRETCH]   explicitly beyond MVP
+  [OUT]       out of scope this semester
+
+Decision tags:
+  [SETTLED]   decided by the team already
+  [PROPOSED]  recommended design choice; needs team sign-off before stories are written
+              against it. Every [PROPOSED] item is listed in Section 4.
+
+"Owner" and "signer" mean the same thing in this file (an address in the M-of-N set).
+"Wallet" or "treasury" means one deployed Treasury contract instance.
+
+==================================================
+1. PROJECT SUMMARY
+==================================================
+
+Problem
+  Shared crypto funds (company, DAO, family, co-founders) are usually controlled by one private
+  key. That key is a single point of failure: it can be lost, stolen, or misused by its holder.
+
+Solution
+  A smart contract wallet that holds ETH and only releases it when the rules encoded in the
+  contract are satisfied:
+    1. M-of-N approval     - at least M of N owners must approve every outgoing action.
+    2. Spending limits     - hard per-transaction cap plus a daily cap; amount determines delay tier.
+    3. Timelocks           - approved actions wait a delay before they can execute, giving honest
+                             parties time to notice and cancel.
+    4. Social recovery     - a separate set of guardians can replace a LOST owner address
+                             (never recovering or storing a private key), behind its own delay
+                             and cancellation window.
+
+Why blockchain
+  The value of the wallet is that no single party - an owner, a guardian, or a backend operator
+  (including our team) - can act alone. Putting the authoritative rules on a server we run would
+  recreate the single point of trust. The rules and the funds therefore live in the contract.
+
+Target users
+  Organizations and DAOs managing shared funds; small groups (co-founders, families); individuals
+  who want a safety net against key loss.
+
+End-of-semester success (from M1, refined)
+  - Deployed to Sepolia testnet with a working React frontend.
+  - Users can deposit test ETH and see the balance.
+  - Owners can propose, approve, and (after the timelock) execute payments.
+  - Per-transaction cap and daily cap are enforced regardless of approvals.
+  - Guardians can replace a lost owner through recovery, with delay and cancellation.
+  - Owners can change the owner set, thresholds, guardians, limits, and delays only via the same
+    M-of-N process (with a longer delay).
+  - Users can review pending, queued, executed, cancelled, and expired actions with per-owner
+    approval details.
+  - Adversarial contract tests demonstrate that unauthorized parties cannot move funds or
+    change control.
+
+==================================================
+2. TEAM AND ROLES (from M1; ongoing)
+==================================================
+
+  Daniel Zhou     Frontend Lead        Interface, wallet connection, WalletService
+  Daniel He       Smart Contract Lead  Approvals, limits, recovery
+  Alex Tran       Infra / DevOps Lead  Toolchain, CI, testnet deployment
+  Matthew Chang   QA / Testing Lead    Adversarial/contract tests, workflow tests, bug tracking
+
+Repo: https://github.com/PlasmaZero/damd-treasury-wallet
+
+==================================================
+3. CURRENT STATE (as of Milestone 2)  [BUILT]
+==================================================
+
+Working end to end, local only:
+  React (Vite, JS, CSS) -> WalletService (ethers.js) -> MetaMask -> Ganache (chainId 1337)
+  -> Solidity Treasury contract.
+
+What the contract does today
+  - receive() accepts ETH, emits Deposited.
+  - Balance readable via RPC (eth_getBalance).
+  - Nothing else: no withdrawals, no owners, no approvals. Deposited funds are stuck by design;
+    only disposable local accounts should be used.
+
+What the frontend does today
+  - Connect MetaMask, show treasury balance, deposit test ETH, show tx status, refresh balance
+    after confirmed deposit (tx.wait()), manual Refresh button.
+
+Tooling today
+  - Ganache local chain, Node.js scripts for compile/deploy, Node.js test runner tests for
+    initial balance and deposit, ESLint, GitHub Actions CI (install, lint, compile, test, build).
+    Deployment is manual.
+
+Known documentation inconsistencies flagged by graders (resolved in this file)
+  - M2 class diagram shows TreasuryProxy, initialize(), upgradeTo(), payments, approvals, limits,
+    delays as if implemented; the prototype only has deposits. Diagrams must label
+    [BUILT] vs [PLANNED].
+  - M2 written rationale picks proxy upgradeability; the M2 presentation called it deferred.
+    Resolved by D1 below.
+  - "All data must be on-chain" was too broad. Resolved by D11 below.
+
+==================================================
+4. DECISIONS
+==================================================
+
+4.1 Settled decisions [SETTLED]
+--------------------------------------------------
+  S1  One Treasury contract holds funds and enforces all rules; no microservices, no custom
+      backend. Frontend talks to the chain directly over RPC.
+  S2  Approvals and all authoritative state are stored on-chain.
+  S3  MetaMask holds all private keys. The app never collects, stores, or generates keys or seed
+      phrases (R13).
+  S4  Events are used for UI updates (over polling) - refined in D10.
+  S5  ETH only (no ERC-20) for MVP.
+  S6  Stack: Solidity, React + Vite, ethers.js, MetaMask, GitHub Actions.
+
+4.2 Decisions to make - recommended choices [PROPOSED]
+--------------------------------------------------
+Each item: the question, options, recommendation, and why. Items marked (FEEDBACK) were
+explicitly asked for in the M2 feedback; the three "questions to answer before Milestone 3"
+are D1, D7/D8 (enumeration), and D4-D6 (recovery policy).
+
+D1  Immutable or upgradeable contract? (FEEDBACK - top priority)
+    Options
+      a) Immutable contract, constructor-initialized. Upgrades = deploy a new wallet and move
+         funds with a normal (governed) payment.
+      b) Upgradeable proxy (UUPS/transparent), upgrade authority = the wallet itself via an
+         M-of-N proposal with a long timelock.
+      c) Upgradeable proxy with a team/admin upgrade key.
+    RECOMMENDATION: (a) immutable for the MVP. Remove TreasuryProxy, initialize() and
+    upgradeTo() from the implementation UML. Keep (b) as [STRETCH].
+    Why
+      - An upgrade path is the most privileged capability in the system: whoever controls it
+        can bypass every M-of-N, limit, timelock and recovery rule. Option (c) defeats the
+        project's zero-trust premise outright.
+      - Option (b) is defensible but adds storage-layout compatibility risk, an initializer
+        that must never be re-callable, and a whole class of upgrade tests. The Parity 2017
+        freeze came from exactly this family of bug (uninitialized shared library ownership).
+      - US1 requires "contract cannot be reinitialized" and "creator has no backdoor";
+        a constructor with no initialize() satisfies both by construction.
+      - The team's original reason for a proxy (ship MVP, keep iterating) is handled by
+        redeploying fresh wallets on testnet; there is no real money to migrate.
+    Note: the team previously chose (b). If the team keeps it, stories must include: upgrade
+    is an ActionType governed by M-of-N + governanceDelay (D9), OpenZeppelin UUPS pattern,
+    storage-layout tests, and _disableInitializers() in the implementation constructor.
+
+D2  Spending-limit semantics (FEEDBACK)
+    Options: per-transaction cap only; rolling-window cap; fixed daily epoch cap; per-recipient
+    caps; combinations.
+    RECOMMENDATION: three parameters, all ETH-denominated, all changeable only via governance:
+      perTxCap      hard cap; payments above it are rejected at propose AND at execute,
+                    regardless of approvals (matches R5).
+      dailyCap      aggregate cap on executed payments per fixed 24h epoch
+                    (day = block.timestamp / 1 days). Checked and accumulated at execute.
+      smallTierCap  amounts <= smallTierCap use the short delay; above it use the long delay
+                    (implements "smaller transactions get less friction" and R10).
+      Invariant: 0 < smallTierCap <= perTxCap <= dailyCap.
+    Why: per-tx cap alone can be bypassed by splitting; the daily cap bounds total loss per day
+    if M owners collude or are compromised. Fixed epochs are much simpler to implement and test
+    than a rolling window. Per-recipient caps are [OUT].
+    Legitimate large spend: owners raise the caps via a governance proposal (long delay), which
+    is visible to everyone in advance.
+
+D3  When does a payment's timelock start? (FEEDBACK)
+    RECOMMENDATION: when the approval that brings the live approval count to threshold is
+    recorded (status Pending -> Queued, readyAt = now + tierDelay). Matches the M2 sequence
+    diagram. Starting at creation would let a proposal sit unapproved until its delay has already
+    elapsed, giving watchers no window after approval.
+
+D4  Recovery policy: who starts it, threshold, delay, cancellation, expiry (FEEDBACK)
+    RECOMMENDATION
+      - Any guardian may initiate recoverOwner(oldOwner, newOwner); initiation counts as that
+        guardian's approval.
+      - Requires K-of-G guardian approvals (guardianThreshold). Counted live (see D7).
+      - On reaching K: status Queued, readyAt = now + recoveryDelay.
+      - Cancellation during Pending or Queued by either:
+          (i) oldOwner itself (if they can sign, the key is not lost - recovery unnecessary), or
+          (ii) M owners (owner threshold) voting to cancel.
+      - Expiry: request expires recoveryTTL after creation if not executed.
+      - At most one active recovery per oldOwner; newOwner may not appear in another active
+        recovery.
+      - Execution re-checks at execution time: oldOwner is still an owner; newOwner is not
+        zero, not the contract, not an owner, not a guardian.
+      - Optional [SHOULD]: newOwner must call confirmRecovery(id) before execution, proving the
+        new key exists and works (guards against typos; satisfies US4 "prove ownership of key").
+    Why: guardian collusion cannot be distinguished from honest recovery at the moment of
+    approval, so the defense is a long window plus two independent veto paths. Delay is longer
+    than payment delays because a successful malicious recovery hands over a voting seat.
+
+D5  Lost key vs. compromised key are different flows (follows from D4)
+    RECOMMENDATION
+      - Guardian recovery is for LOST keys. A thief holding a compromised key could cancel a
+        guardian recovery via D4(i), so recovery is the wrong tool there.
+      - COMPROMISED keys are handled by owner governance: a ReplaceOwner or RemoveOwner
+        proposal approved by M owners. The thief alone is still only one vote.
+      - Guardian recovery does not require any owner participation, so it also restores a
+        wallet that has lost quorum (too many lost keys to reach M).
+    Document this split in the UI help text and in the recovery sequence diagram.
+
+D6  Can an address be both an owner and a guardian? (FEEDBACK)
+    RECOMMENDATION: No. Owner set and guardian set are disjoint, enforced in the constructor
+    and on every change (AddOwner, AddGuardian, recovery newOwner, ReplaceOwner).
+    Why: an owner who is also a guardian could help recover their own seat or vote twice in
+    different capacities; a compromised dual-role key affects both systems. Disjoint roles make
+    the threat model and tests much simpler.
+    Additional rule: guardians cannot change the guardian set; only owner governance can.
+
+D7  How are approvals counted when the owner/guardian set changes? (problem statement:
+    "signer changes without a security gap")
+    Options
+      a) Stored counter incremented on approve (current class diagram: approvals: uint256).
+      b) Invalidate all pending proposals whenever the owner set changes (config epoch).
+      c) Store approved[id][owner] only; count live at execution by iterating current owners.
+    RECOMMENDATION: (c). Remove the stored approvals counter from the Payment struct.
+    Why: removed or replaced owners' approvals automatically stop counting, new owners must
+    approve explicitly, raised thresholds apply to pending proposals, and there is no counter
+    to desync. Gas cost of iterating N owners is trivial at our scale (cap N at 20).
+    Same rule for guardians and recovery approvals.
+    Related rule: every check is re-evaluated at execution against CURRENT config (membership,
+    threshold, perTxCap, dailyCap, balance). Propose-time checks exist only for early feedback.
+
+D8  How does the UI enumerate proposals and history? (FEEDBACK - Solidity mappings are not
+    enumerable)
+    RECOMMENDATION
+      - Proposals and recoveries are stored in arrays with sequential ids; proposalCount() and
+        getProposal(id) let the UI page through all of them from storage. Storage is the source
+        of truth for CURRENT state (status, readyAt, live approval count, who has approved via
+        hasApproved(id, owner)).
+      - Events are the source for TIMELINE/HISTORY (who approved when, executed tx hash,
+        deposits). Queried with eth_getLogs from the deployment block, in chunks (RPC providers
+        limit block ranges on Sepolia).
+      - No indexer (The Graph) for MVP [OUT].
+
+D9  How are signer/guardian/threshold/limit/delay changes made? (problem statement)
+    Options: generic Gnosis-style proposals (target, value, calldata); typed proposals; separate
+    admin functions.
+    RECOMMENDATION: typed proposals sharing the payment approval machinery.
+      ActionType enum: Payment, AddOwner, RemoveOwner, ReplaceOwner, SetThreshold,
+      AddGuardian, RemoveGuardian, SetGuardianThreshold, SetLimits, SetDelays.
+      Parameters stored as abi-encoded bytes per type (layouts in Section 6.4).
+      Non-payment actions use governanceDelay (longer than either payment tier) and ignore
+      spending caps.
+    Why: typed actions are easy to validate on-chain, easy to decode and preview in the UI
+    ("transaction simulation"), and cannot be used to make arbitrary external calls. Generic
+    calldata execution is [STRETCH] / [OUT].
+    Recovery is NOT an ActionType: it is a separate state machine with separate storage,
+    separate approvals, and separate delays (explicit M2 feedback: do not share counters or
+    timing rules).
+
+D10 Event-driven sync and offline recovery in the UI (FEEDBACK)
+    RECOMMENDATION: events are cache-invalidation signals only. On any relevant event, new
+    block, reconnect, tab refocus, account change, or chain change, the UI re-reads the
+    authoritative snapshot from storage (debounced). The UI never reconstructs state by
+    replaying events, so missed events cannot cause a wrong view.
+
+D11 On-chain vs off-chain data (FEEDBACK - correct the M2 rationale)
+    RECOMMENDATION wording: "All authoritative state - funds, membership, thresholds, limits,
+    proposals, approvals, recoveries - is on-chain. Non-authoritative presentation data
+    (e.g. address-book labels, UI preferences) may live off-chain because it cannot affect
+    fund safety." MVP stores labels in browser localStorage only [SHOULD]; no database.
+
+D12 Who can cancel a queued payment, and how do we stop a malicious minority? (problem
+    statement)
+    Options: any single owner cancels (griefable forever); M owners cancel (too slow to stop an
+    attack); blocking-minority vote.
+    RECOMMENDATION: cancelThreshold = N - M + 1 owners (computed live from current N and M).
+      - Before queueing, any N - M + 1 owners could already block a proposal by refusing to
+        approve. Giving that same group a veto after queueing grants no new blocking power,
+        so a smaller minority still cannot stall the wallet.
+      - Owners may revokeApproval(id) only while Pending; once Queued, use cancel votes.
+      - Proposals expire after proposalTTL, so abandoned items do not clog the queue.
+    Constructor/governance rule: M <= N, and recommended M >= 2 when N >= 2.
+    Minority-drain prevention is already covered by M-of-N + caps + timelock.
+
+D13 Urgent legitimate payments vs. timelock (problem statement)
+    RECOMMENDATION
+      - Small-tier payments (<= smallTierCap) use a short delay - this is the normal urgent path.
+      - [SHOULD] Unanimous fast path: if ALL current owners (N-of-N) have approved a payment,
+        readyAt = now + smallTierDelay even for large amounts. Caps still apply. Rationale:
+        if every owner key is compromised the delay would not save the funds anyway.
+      - No emergency bypass of caps.
+
+D14 Single wallet vs. factory (US1: "as a wallet creator...")
+    RECOMMENDATION: TreasuryFactory.createWallet(config) deploys a new Treasury with `new`
+    (constructor init, no clones/initializers - consistent with D1). Factory keeps
+    walletsOf[address] for every owner and guardian at creation and emits WalletCreated.
+    UI wallet picker = factory list for the connected address + "add wallet by address";
+    role is always verified live via isOwner/isGuardian (factory list can go stale after
+    membership changes). If time is short, a deploy script with a config file is acceptable
+    for the demo, but stories for the factory are [MVP].
+
+D15 Local chain and contract toolchain (FEEDBACK: name testnet and deployment toolchain;
+    add fuzz/invariant testing)
+    Options: keep Ganache + Node scripts; Hardhat; Foundry.
+    RECOMMENDATION: Foundry (forge for build/test/fuzz/invariant tests, anvil as local chain,
+    forge script for deterministic deploys to Sepolia, forge verify for Etherscan).
+    Target testnet: Sepolia.
+    Why: Ganache and Truffle were sunset by Consensys and are no longer maintained. Foundry's
+    built-in fuzz and invariant testing directly addresses the feedback that the important
+    risks are contract state transitions. ethers.js frontend and JS integration tests are
+    unchanged; anvil is a drop-in RPC on 127.0.0.1:8545 (chainId 31337 - update MetaMask
+    instructions and README).
+    Alternative if the team prefers to stay in JS: Hardhat (also supports Solidity tests);
+    acceptable, but pick one before Milestone 3 stories.
+
+D16 Does propose() count as the proposer's approval?
+    RECOMMENDATION: Yes (saves one transaction per proposal; a guardian initiating recovery
+    likewise counts as an approval). Update the payment sequence diagram, which currently
+    shows approvals = 0 after propose.
+
+D17 Parameter defaults (demo vs. realistic)
+    RECOMMENDATION: all delays/TTLs are constructor parameters with enforced minimum
+    orderings; demo deployments use seconds, documentation states realistic values.
+                          Demo (anvil/Sepolia demo)   Realistic
+      smallTierDelay      15 s                        1 h
+      largeTierDelay      60 s                        24 h
+      governanceDelay     120 s                       48 h
+      recoveryDelay       180 s                       72 h
+      proposalTTL         1 day                       7 days
+      recoveryTTL         1 day                       7 days
+    Enforced: smallTierDelay <= largeTierDelay <= governanceDelay <= recoveryDelay, and
+    each TTL > the longest delay it can wait on. SetDelays itself waits the OLD
+    governanceDelay. Hard minimums (e.g. governanceDelay >= 60 s) prevent governance from
+    zeroing delays.
+
+4.3 Requirement clarifications needed [PROPOSED]
+--------------------------------------------------
+  R10 Original: delay scales with number of users and amount. Recommendation: scale by
+      amount tier only (D2/D17); drop "number of users" (no clear security meaning).
+  R11 Original: respond within 5 s. On Sepolia, block time alone is ~12 s. Recommendation:
+      "UI acknowledges every action (pending state, tx hash) within 5 s; confirmed state is
+      shown after 1 confirmation." Keep the 5 s target for reads.
+  R7  "View past transactions and approval details" -> covered by D8 (storage for state,
+      events for timeline).
+  R9  "Prevent/disincentivize collusion" -> cannot be fully prevented; reworded to "collusion
+      by guardians or a minority of owners cannot move funds or seize a seat without a
+      timelock window in which honest parties can cancel" (D4, D12, D6).
+  R15 "5 connected users" -> anvil/Sepolia handle this trivially; test with 5 MetaMask
+      accounts in the demo.
+
+==================================================
+5. ARCHITECTURE
+==================================================
+
+5.1 Components
+--------------------------------------------------
+  OFF-CHAIN (user's browser)
+    React app (Vite)           role-aware UI: wallet picker, dashboard, proposals, governance,
+                               recovery, history.
+    WalletService (ethers.js)  the only module that touches the chain: reads, simulations,
+                               writes, event subscriptions, log queries. Acts as a facade over
+                               ethers so React components never import ethers directly.
+    MetaMask                   holds keys, signs transactions. Trust boundary.
+
+  CONNECTION
+    JSON-RPC provider          anvil locally; Sepolia via a hosted RPC (Alchemy/Infura free
+                               tier). Reads go through a read-only provider; writes go through
+                               MetaMask's provider.
+
+  ON-CHAIN
+    TreasuryFactory            deploys wallets, keeps creation-time membership index. [MVP]
+    Treasury (per wallet)      holds ETH, membership, config, proposals, recoveries; enforces
+                               every rule. Immutable (D1).
+    Recipient                  any EOA or contract receiving a payment.
+
+  NOT PRESENT (by design): custom backend, database, indexer, admin key, upgrade proxy.
+
+5.2 Trust boundaries
+--------------------------------------------------
+  - Private keys never leave MetaMask.
+  - The frontend is untrusted for safety purposes: a malicious or buggy UI can at worst
+    submit a transaction that the contract rejects. All rules are in the contract.
+  - The RPC provider is trusted for availability and read freshness only. A lying RPC could
+    mislead the UI but cannot forge signed transactions or bypass the contract.
+  - There is no privileged deployer/admin. The factory has no authority over wallets it
+    deployed. (If D1 becomes proxy, the upgrade path is a trust boundary and must be governed
+    by the wallet itself.)
+
+5.3 Data flows
+--------------------------------------------------
+  Read (free, instant): UI -> WalletService -> eth_call / eth_getBalance -> snapshot.
+  Write: UI -> WalletService.simulate (eth_call / staticCall; surface revert reason) ->
+         MetaMask signature -> eth_sendRawTransaction -> mined -> receipt (tx.wait()) ->
+         event -> UI invalidates and re-reads snapshot.
+  History: WalletService.getLogs(from deployBlock, chunked) -> decoded timeline.
+
+5.4 Sync rules (D10)
+--------------------------------------------------
+  Triggers to re-read snapshot: contract event, new block (debounced), tx confirmation,
+  accountsChanged, chainChanged, reconnect, window focus/visibility.
+  Never derive current state from events alone.
+  On wrong network: block writes, prompt to switch.
+
+==================================================
+6. CONTRACT SPECIFICATION
+==================================================
+
+6.1 Roles
+--------------------------------------------------
+  Owner     propose, approve, revokeApproval (Pending only), voteCancel, execute,
+            voteCancelRecovery. Counted in M-of-N.
+  Guardian  initiateRecovery, approveRecovery, executeRecovery. Cannot touch funds or
+            governance. Disjoint from owners (D6).
+  Old owner (target of recovery) can cancelRecovery for their own seat.
+  New owner (recovery replacement) [SHOULD] confirmRecovery.
+  Anyone    deposit (receive), all view functions.
+
+6.2 Configuration (all in storage)
+--------------------------------------------------
+  address[] owners;              mapping(address=>bool) isOwner;      uint256 threshold (M)
+  address[] guardians;           mapping(address=>bool) isGuardian;   uint256 guardianThreshold (K)
+  uint256 perTxCap, dailyCap, smallTierCap
+  uint64  smallTierDelay, largeTierDelay, governanceDelay, recoveryDelay, proposalTTL, recoveryTTL
+  mapping(uint256 day => uint256 spent) spentPerDay
+  Limits: N <= 20, G <= 20.
+
+6.3 Constructor validation (US1)
+--------------------------------------------------
+  Reverts if: owners empty; threshold < 1 or > N; guardians empty; guardianThreshold < 1 or > G;
+  any owner/guardian is zero, the contract itself, or duplicated; any address in both sets;
+  cap ordering violated (D2); delay ordering or minimums violated (D17).
+  Recommended (enforce if team agrees): threshold >= 2 when N >= 2; guardianThreshold >= 2
+  when G >= 2.
+  No initialize(), no owner/admin variable, no selfdestruct, no delegatecall.
+
+6.4 Proposals (payments + governance)
+--------------------------------------------------
+  struct Proposal {
+    ActionType action;
+    bytes      params;      // abi-encoded, layout per action below
+    address    proposer;
+    uint64     createdAt;
+    uint64     readyAt;     // 0 until Queued
+    uint64     expiresAt;   // createdAt + proposalTTL
+    Status     status;      // Pending | Queued | Executed | Cancelled   (Expired is derived)
+  }
+  Proposal[] proposals;
+  mapping(uint256 => mapping(address => bool)) approved;     // live-counted (D7)
+  mapping(uint256 => mapping(address => bool)) cancelVoted;
+
+  params layouts
+    Payment              (address payable recipient, uint256 amount)
+    AddOwner             (address newOwner)
+    RemoveOwner          (address owner)                 // reverts if N-1 < threshold
+    ReplaceOwner         (address oldOwner, address newOwner)   // compromised-key path (D5)
+    SetThreshold         (uint256 newThreshold)
+    AddGuardian          (address guardian)
+    RemoveGuardian       (address guardian)              // reverts if G-1 < guardianThreshold
+    SetGuardianThreshold (uint256 newK)
+    SetLimits            (uint256 perTxCap, uint256 dailyCap, uint256 smallTierCap)
+    SetDelays            (uint64 small, uint64 large, uint64 gov, uint64 recovery,
+                          uint64 proposalTTL, uint64 recoveryTTL)
+
+  Delay used when Queued
+    Payment amount <= smallTierCap -> smallTierDelay; else largeTierDelay
+    [SHOULD] all N owners approved -> smallTierDelay (D13)
+    any non-Payment action -> governanceDelay
+
+  State machine
+    (none) --propose--> Pending           [proposer auto-approves, D16]
+    Pending --approve (live count >= M)--> Queued (readyAt set)
+    Pending --revokeApproval--> Pending
+    Pending|Queued --cancel votes >= N-M+1--> Cancelled
+    Queued --execute (now >= readyAt, all checks pass)--> Executed
+    Pending|Queued --now > expiresAt--> Expired (derived; execute/approve revert)
+
+  execute(id) checks, in order, against CURRENT state
+    caller is owner; status Queued; now >= readyAt; now <= expiresAt;
+    liveApprovals(id) >= threshold;
+    action-specific validation (caps, daily cap, balance, membership/disjointness rules,
+    threshold bounds, limit/delay ordering);
+    effects first (status = Executed, spentPerDay += amount, config change);
+    then interaction (recipient.call{value: amount}("")), revert entire tx on failure.
+    Guarded by nonReentrant.
+    If live approvals dropped below threshold after queueing (owner removed or threshold
+    raised), execute reverts; remaining/new owners may approve to restore the count. readyAt
+    is not reset (documented edge case; test it).
+
+  Propose-time validation (early feedback only): caller is owner; recipient non-zero and not
+  the contract; amount > 0 and <= perTxCap; action params well-formed.
+
+6.5 Recovery (separate state machine, D4)
+--------------------------------------------------
+  struct Recovery {
+    address oldOwner; address newOwner; address initiator;
+    uint64 createdAt; uint64 readyAt; uint64 expiresAt;
+    RecoveryStatus status;   // Pending | Queued | Executed | Cancelled  (Expired derived)
+    bool newOwnerConfirmed;  // [SHOULD]
+  }
+  Recovery[] recoveries;
+  mapping(uint256 => mapping(address => bool)) recoveryApproved;   // guardians, live-counted
+  mapping(uint256 => mapping(address => bool)) recoveryCancelVoted; // owners
+  mapping(address => uint256) activeRecoveryFor;  // oldOwner -> id+1 (0 = none)
+
+  Flow
+    initiateRecovery(old, new)   guardian only; old is owner; new valid (not zero/contract/
+                                 owner/guardian); no active recovery for old; initiator approves.
+    approveRecovery(id)          guardian only, once per guardian; live count >= K -> Queued,
+                                 readyAt = now + recoveryDelay.
+    confirmRecovery(id)          [SHOULD] only newOwner.
+    cancelRecovery(id)           only oldOwner; any time before Executed.
+    voteCancelRecovery(id)       owners; votes >= threshold M (counting live, excluding oldOwner)
+                                 -> Cancelled.
+    executeRecovery(id)          guardian or newOwner; Queued; now >= readyAt; not expired;
+                                 live guardian approvals >= K; old still owner; new still valid;
+                                 [SHOULD] newOwnerConfirmed. Effect: swap old -> new in owners[]
+                                 and isOwner; clear activeRecoveryFor. Old owner's proposal
+                                 approvals stop counting automatically (D7).
+
+6.6 Events (indexed fields in brackets)
+--------------------------------------------------
+  Deposited([from], amount)
+  ProposalCreated([id], action, [proposer], params)
+  Approved([id], [owner])            ApprovalRevoked([id], [owner])
+  Queued([id], readyAt)              Executed([id])
+  CancelVoted([id], [owner])         Cancelled([id])
+  PaymentSent([id], [recipient], amount)
+  OwnerAdded([owner])  OwnerRemoved([owner])  OwnerReplaced([oldOwner], [newOwner])
+  ThresholdChanged(newM)
+  GuardianAdded([g])   GuardianRemoved([g])   GuardianThresholdChanged(newK)
+  LimitsChanged(perTxCap, dailyCap, smallTierCap)
+  DelaysChanged(small, large, gov, recovery, proposalTTL, recoveryTTL)
+  RecoveryInitiated([id], [oldOwner], [newOwner], initiator)
+  RecoveryApproved([id], [guardian])  RecoveryQueued([id], readyAt)
+  RecoveryConfirmed([id])             RecoveryExecuted([id])
+  RecoveryCancelled([id], [by])
+  Factory: WalletCreated([wallet], [creator])
+
+6.7 Custom errors (UI maps each to a human message)
+--------------------------------------------------
+  NotOwner, NotGuardian, NotOldOwner, NotNewOwner, InvalidAddress, DuplicateAddress,
+  RoleOverlap, InvalidThreshold, InvalidLimits, InvalidDelays, AmountZero, AboveTxCap,
+  DailyCapExceeded, InsufficientBalance, AlreadyApproved, NotApproved, AlreadyVoted,
+  WrongStatus, TimelockActive, Expired, BelowThreshold, RecoveryAlreadyActive,
+  TransferFailed, Reentrancy.
+
+6.8 View functions
+--------------------------------------------------
+  getOwners(), getGuardians(), isOwner(a), isGuardian(a), threshold(), guardianThreshold(),
+  cancelThreshold(), getLimits(), getDelays(), spentToday(), remainingToday(),
+  proposalCount(), getProposal(id), liveApprovals(id), hasApproved(id, owner),
+  cancelVotes(id), statusOf(id) (includes derived Expired),
+  recoveryCount(), getRecovery(id), liveRecoveryApprovals(id), hasRecoveryApproval(id, g),
+  activeRecoveryFor(owner).
+  Balance via eth_getBalance.
+
+==================================================
+7. SECURITY MODEL
+==================================================
+
+7.1 Adversaries considered
+--------------------------------------------------
+  A1 Outsider (no role)                       -> cannot propose/approve/recover (role checks).
+  A2 One compromised or malicious owner       -> one vote; cannot reach M alone; cannot cancel
+                                                 alone unless N-M+1 = 1.
+  A3 Malicious minority of owners (< M)       -> cannot execute; cannot block beyond what
+                                                 refusing to approve already allows (D12);
+                                                 proposals expire rather than clog.
+  A4 M colluding/compromised owners           -> bounded by perTxCap, dailyCap, and delays
+                                                 (honest owners/observers see queued items);
+                                                 cap/delay changes wait governanceDelay.
+  A5 Colluding guardians (>= K)               -> can only start a seat swap; must survive
+                                                 recoveryDelay, during which oldOwner or M
+                                                 owners can cancel. Cannot move funds.
+  A6 Thief with a stolen owner key            -> handled by owner ReplaceOwner (D5).
+  A7 Malicious recipient contract             -> reentrancy blocked (CEI + nonReentrant);
+                                                 failed transfer reverts whole execution.
+  A8 Malicious/buggy frontend or RPC          -> contract is the only authority; UI simulates
+                                                 before signing so users see the decoded effect.
+
+7.2 Invariants (target for Foundry invariant tests)
+--------------------------------------------------
+  I1  ETH leaves the contract only through an Executed Payment proposal.
+  I2  Each proposal and recovery executes at most once.
+  I3  For any executed proposal: at execution time live approvals >= threshold and
+      now >= readyAt and now <= expiresAt.
+  I4  Sum of executed payment amounts in any day <= dailyCap at the time of each execution;
+      each executed payment <= perTxCap at execution time.
+  I5  1 <= threshold <= owners.length; 1 <= guardianThreshold <= guardians.length.
+  I6  owners and guardians are disjoint, duplicate-free, and contain no zero address.
+  I7  At most one active recovery per owner.
+  I8  smallTierCap <= perTxCap <= dailyCap; delay ordering from D17 always holds.
+  I9  No function other than governed ActionTypes and executeRecovery changes membership or
+      config.
+
+7.3 Adversarial test matrix (each row = at least one test; most are story acceptance criteria)
+--------------------------------------------------
+  Payments: non-owner propose/approve/execute; duplicate approval; revoke then re-approve;
+  revoke after Queued (reverts); execute before threshold; execute at readyAt-1 and readyAt
+  (boundary); execute after expiry; double execute; amount = perTxCap and perTxCap+1;
+  daily cap exactly reached then +1 wei; daily cap resets next epoch; insufficient balance;
+  recipient reverts; recipient reenters execute/approve; recipient = zero / contract itself.
+  Membership changes mid-flight: owner removed after approving (approval stops counting);
+  threshold raised after queue (execute reverts); new owner added (needs explicit approval);
+  owner replaced by recovery while their approval is pending.
+  Governance: each ActionType success path; RemoveOwner below threshold; AddOwner that is a
+  guardian (RoleOverlap); SetDelays below minimums; SetLimits breaking ordering; cancel with
+  N-M votes (fails) and N-M+1 votes (succeeds).
+  Recovery: non-guardian initiate/approve; duplicate guardian approval; second active recovery
+  for same owner; newOwner is existing owner/guardian/zero; execute before K; execute before
+  delay; oldOwner cancels; M owners cancel; M-1 owners cannot cancel; guardian removed after
+  approving (stops counting); expiry; oldOwner already removed via governance before
+  execution; replay of executed recovery.
+  Fuzz: random amounts/time warps against caps and delays; random action sequences for
+  invariants.
+
+==================================================
+8. FRONTEND SPECIFICATION
+==================================================
+
+8.1 Views
+--------------------------------------------------
+  Connect / network guard        connect MetaMask; detect wrong chain; prompt switch.  [BUILT partial]
+  Wallet picker                  wallets for connected address (factory) + add by address. [MVP]
+  Create wallet                  form for owners, M, guardians, K, limits, delays; client-side
+                                 validation mirroring constructor rules; simulate then deploy. [MVP]
+  Dashboard                      balance, your role(s), owners, M, guardians, K, limits,
+                                 spent/remaining today, delays, counts by status.  [MVP]
+  Deposit                        [BUILT]
+  New payment                    recipient, amount; shows tier, resulting delay, cap checks,
+                                 remaining daily cap BEFORE signing; simulate.  [MVP]
+  Proposals list                 filter by Pending / Queued / Ready / Executed / Cancelled /
+                                 Expired; shows id, action, decoded params, live approvals
+                                 x/M, countdown to readyAt.  [MVP]
+  Proposal detail                per-owner approval status, timeline from events, actions
+                                 available to the connected role (approve, revoke, vote cancel,
+                                 execute) with disabled-state reasons.  [MVP]
+  Governance                     forms for each non-payment ActionType with decoded preview.  [MVP]
+  Recovery                       guardian view: initiate/approve/execute; owner view: list
+                                 active recoveries, vote cancel; BANNER on every page if a
+                                 recovery targets the connected address with a one-click
+                                 cancel.  [MVP]
+  History                        event timeline (deposits, payments, membership changes,
+                                 recoveries) with tx links.  [MVP]
+  Address labels                 local-only labels for addresses (localStorage).  [SHOULD]
+
+8.2 WalletService interface (extends the M2 factory-returned object)
+--------------------------------------------------
+  connect(), onAccountOrChainChange(cb)
+  listWallets(address), createWallet(config)
+  snapshot(wallet)                -> config, balance, roles of connected account, counts
+  listProposals(wallet, {status, offset, limit}), getProposal(wallet, id)
+  listRecoveries(wallet, ...), getRecovery(wallet, id)
+  getHistory(wallet, fromBlock?)  -> chunked getLogs, decoded
+  simulate(txRequest)             -> {ok, revertReason, decodedEffect}
+  deposit, proposePayment, proposeAction(type, params), approve, revokeApproval, voteCancel,
+  execute, initiateRecovery, approveRecovery, confirmRecovery, cancelRecovery,
+  voteCancelRecovery, executeRecovery
+  subscribe(wallet, onInvalidate) -> unsubscribe
+  All writes: simulate first; return tx hash immediately (pending UI within 5 s); resolve on
+  receipt; map custom errors to messages (R8, R14).
+
+8.3 Config
+--------------------------------------------------
+  deployments/<chainId>.json: factory address, deployment block, RPC URL key name.
+  RPC API keys come from env (VITE_*), never committed; note that frontend keys are public,
+  so use a domain-restricted, rate-limited key.
+
+==================================================
+9. TOOLING, TESTING, CI/CD, DEPLOYMENT
+==================================================
+
+  Contracts       Solidity ^0.8.x, Foundry (forge build/test/fmt, anvil), OpenZeppelin for
+                  ReentrancyGuard only (no upgradeable libs if D1 = immutable).
+  Contract tests  forge unit tests per Section 7.3; fuzz tests on amounts/time; invariant tests
+                  for I1-I9; coverage report.
+  Static analysis Slither in CI on Solidity changes.  [SHOULD]
+  Frontend        React + Vite + ethers.js v6; ESLint; JS integration tests against anvil
+                  (keep Node test runner or Vitest - team choice).
+  CI (GitHub Actions) on push/PR: install, lint, forge fmt --check, forge build, forge test
+                  (incl. fuzz/invariant), slither, frontend tests, vite build.
+  Branch policy   main protected; PR required; >= 1 approving review; CI status checks
+                  required; no direct pushes. Document in README (feedback item).
+  Local dev       anvil (chainId 31337) + forge script deploy + npm run dev; README lists exact
+                  Node, Foundry, MetaMask versions in one place; disposable anvil keys clearly
+                  labeled dev-only.
+  Testnet         Sepolia. Deploy with forge script using a team deployer key from env (the
+                  deployer has no privileges after deploy). Verify on Etherscan. Write
+                  deployments/11155111.json. Post-deploy smoke script reads config and checks it.
+                  Get Sepolia test ETH from faucets early - faucet limits are tight.
+                  Deploy a minimal version to Sepolia early in M3 (feedback item).
+  Frontend host   [SHOULD] static hosting (GitHub Pages or Vercel) for the demo.
+
+==================================================
+10. REQUIREMENTS TRACEABILITY
+==================================================
+
+  R1  Connect wallet, view balance               [BUILT] (extend: roles, wallet picker)
+  R2  Deposit test ETH                           [BUILT]
+  R3  Owners propose payment                     [MVP] 6.4
+  R4  M-of-N approval before execution           [MVP] 6.4, D7
+  R5  Block payments above limit regardless      [MVP] D2 perTxCap + dailyCap
+  R6  Guardians replace lost signer              [MVP] 6.5, D4, D5
+  R7  View past transactions and approvals       [MVP] D8, 8.1
+  R8  UI shows success/failure                   [MVP] 8.2
+  R9  Collusion resistance                       [MVP] reworded, D4/D6/D12
+  R10 Delay scales with amount                   [MVP] reworded, D2/D17
+  R11 Responsiveness                             reworded, 4.3
+  R12 Unauthorized users cannot approve/recover  [MVP] 6.1, 7.3
+  R13 No key/seed collection                     [BUILT] S3
+  R14 Failed tx leaves app usable, not success   [BUILT partial] 8.2
+  R15 5 concurrent test users                    [SHOULD] demo with 5 accounts
+  NEW R16 Membership/threshold/limit/delay changes only via M-of-N + governanceDelay [MVP] D9
+  NEW R17 Cancellation of queued payments by blocking minority (N-M+1)            [MVP] D12
+  NEW R18 Proposals and recoveries expire                                        [MVP] D17
+  NEW R19 Pre-sign simulation showing decoded effect and revert reason            [MVP] 8.2
+  NEW R20 Adversarial + invariant contract test suite in CI                       [MVP] 7
+
+User stories from M1, updated
+  US1 Wallet creation      - via factory; remove "reinitialize" concern (no initializer);
+                             add role-overlap and cap/delay ordering validation.
+  US2 Observe queue        - statuses now Pending/Queued/Ready/Executed/Cancelled/Expired;
+                             per-owner approvals; cancel voting.
+  US3 Timely transactions  - tiered delays; "feedback within 5 s" = pending state.
+  US4 Lost key             - user creates a NEW MetaMask account themselves (contract never
+                             generates keys) and gives the address to a guardian; guardian
+                             initiates; [SHOULD] new address confirms. Compromised key ->
+                             owners' ReplaceOwner (new story US7).
+  US5 Guardian assessment  - add: guardian sees old/new address, approvals x/K, readyAt,
+                             cancellation status.
+  US6 Secure frontend      - role-gated actions with disabled-state reasons; recovery alert
+                             banner.
+  NEW US7  As an owner, I want to replace a compromised owner via M-of-N so a thief cannot
+           block or exploit recovery.
+  NEW US8  As an owner, I want to change owners/guardians/thresholds/limits/delays through a
+           visible, time-delayed proposal so no one can change the rules silently.
+  NEW US9  As an owner, I want to vote to cancel a suspicious queued payment so a malicious
+           majority's payment can be stopped during the timelock.
+  NEW US10 As an owner targeted by a recovery, I want to be alerted and cancel it so guardians
+           cannot hijack my seat while I still hold my key.
+
+==================================================
+11. MVP SCOPE AND BUILD ORDER
+==================================================
+
+Order follows M2 feedback: finish the payment lifecycle before starting recovery so two
+authorization systems are not built at once.
+
+Epic 0 - Foundations (start of M3)
+  - Ratify Section 4.2 decisions; update UML (remove proxy if D1 accepted; label BUILT vs
+    PLANNED; add recovery sequence + state diagram; add negative branches).
+  - Migrate toolchain to Foundry/anvil (D15); update README and CI; branch protection docs.
+  - Deploy current deposit-only contract to Sepolia (smoke test the path).
+
+Epic 1 - Payment lifecycle (contract + UI)  [highest priority]
+  - Constructor config + validation (owners, M, guardians, K, caps, delays).
+  - proposePayment / approve / revokeApproval / execute with live counting, tiers, caps,
+    daily cap, expiry, reentrancy guard.
+  - Cancel voting (N-M+1).
+  - Views + events; WalletService methods; proposals list/detail; new-payment form with
+    simulation; history.
+  - Full adversarial + fuzz + invariant tests for payments.
+
+Epic 2 - Governance actions
+  - ActionTypes AddOwner, RemoveOwner, ReplaceOwner, SetThreshold, AddGuardian,
+    RemoveGuardian, SetGuardianThreshold, SetLimits, SetDelays with governanceDelay.
+  - Governance UI with decoded previews.
+  - Membership-change-mid-flight tests.
+
+Epic 3 - Guardian recovery
+  - Recovery state machine, both cancel paths, expiry, one-active-per-owner.
+  - Guardian UI, owner alert banner, recovery history.
+  - Recovery adversarial tests; recovery sequence diagram matches code.
+
+Epic 4 - Factory and multi-wallet UX
+  - TreasuryFactory, wallet picker, create-wallet form.
+
+Epic 5 - Testnet + demo hardening
+  - Sepolia deployment script, verification, deployments json, smoke script.
+  - Demo scenario script: 3-of-5 owners, 3 guardians (K=2), demo delays; walkthrough of
+    payment, cancel, governance change, lost-key recovery, cancelled malicious recovery.
+
+[SHOULD] unanimous fast path (D13), newOwner confirm (D4), address labels, Slither in CI,
+static frontend hosting.
+
+[STRETCH] governed proxy upgrades (D1-b), ERC-20 support, generic calldata execution,
+ERC-4337 account abstraction, The Graph indexer, notifications (email/push).
+
+[OUT] mainnet, real funds, external audit, multi-chain/bridges, swaps/lending/staking, native
+mobile apps, bank integration, recovering private keys, reversing executed payments,
+per-recipient limits.
+
+==================================================
+12. M2 FEEDBACK -> WHERE ADDRESSED
+==================================================
+
+  Mixed current/future in diagrams .................. 3, Epic 0 (label BUILT vs PLANNED)
+  Guardian recovery flow/sequence ................... D4, D5, 6.5, Epic 0/3
+  Spending limits and timelock representation ....... D2, D3, D17, 6.2, 6.4
+  Missed events / reconnect ......................... D10, 5.4
+  Proxy as trust boundary / proxy inconsistency ..... D1
+  Negative branches in sequence diagrams ............ 7.3 (use as list of alt branches)
+  "All data on-chain" too broad ..................... D11
+  Third design-rationale row ........................ use D7 (live approval counting) or D4
+  Patterns tied to concrete problems ................ WalletService = facade over ethers (5.1);
+                                                      typed ActionType = command objects (D9);
+                                                      Proposal/Recovery = explicit state machines
+  Name testnet + deployment toolchain ............... D15, 9
+  Expand contract tests / fuzz-invariant ............ 7.2, 7.3, 9
+  Branch protection details ......................... 9
+  Security checks for Solidity in CI ................ 9 (Slither, forge fmt, invariants)
+  README separates prototype vs planned ............. Epic 0
+  Mappings not enumerable ........................... D8
+  Owner/guardian role overlap ....................... D6
+  Timelock start point .............................. D3
+  Deploy minimal contract to Sepolia early .......... Epic 0
+  Payment lifecycle before recovery ................. 11 build order
+
+==================================================
+13. REFERENCE SYSTEMS (context, unchanged from v1)
+==================================================
+
+  - Safe{Wallet} (Gnosis Safe): industry-standard multisig; spending limits, delays, recovery
+    are add-on modules. Its docs acknowledge guardian collusion risk. A Gnosis Pay Delay Module
+    exploit (2025-2026) shows modules add attack surface.
+  - Argent: early combination of spending limits, timelocks, and guardian recovery; same
+    security/usability timelock tradeoff.
+  - ERC-4337 wallets (Safe{Core}, Biconomy, ZeroDev, Kernel): modular smart accounts; stretch.
+  - Parity multisig 2017: access-control gap on a shared library let a user take ownership and
+    destroy it, freezing ~$280M across 587 wallets despite audits. Primary motivation for D1
+    and... (1 KB left)

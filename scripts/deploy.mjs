@@ -1,21 +1,34 @@
-import './compile.mjs';
 import fs from 'node:fs';
-import { ContractFactory, JsonRpcProvider } from 'ethers';
-
-const provider = new JsonRpcProvider('http://127.0.0.1:8545');
-if ((await provider.getNetwork()).chainId !== 1337n) {
-  throw new Error('Start the local blockchain with npm run chain first.');
+import path from 'node:path';
+import {JsonRpcProvider,Wallet,ContractFactory,getAddress} from 'ethers';
+import {compile,root} from './compile.mjs';
+if(fs.existsSync(path.join(root,'.env'))) process.loadEnvFile(path.join(root,'.env')); 
+const network=process.argv.includes('sepolia')?'sepolia':'ganache';
+const rpc=network==='sepolia'?process.env.SEPOLIA_RPC_URL:'http://127.0.0.1:8545';
+if(!rpc) throw new Error('Set SEPOLIA_RPC_URL in .env.');
+const provider=new JsonRpcProvider(rpc,undefined,{cacheTimeout:0});
+const chainId=Number((await provider.getNetwork()).chainId);
+if(chainId!==(network==='sepolia'?11155111:1337)) throw new Error('Wrong deployment network.');
+if(network==='sepolia' && !process.env.DEPLOYER_KEY) throw new Error('Set DEPLOYER_KEY in .env.');
+const signer=network==='sepolia'?new Wallet(process.env.DEPLOYER_KEY,provider):await provider.getSigner(0);
+const artifacts=compile();
+const factory=await new ContractFactory(artifacts.TreasuryFactory.abi,artifacts.TreasuryFactory.bytecode,signer).deploy();
+const receipt=await factory.deploymentTransaction().wait();
+const factoryAddress=await factory.getAddress();
+let demoWallet=null;
+const configFile=network==='sepolia'?'config/sepolia-wallet.json':'config/demo-wallet.json';
+if(fs.existsSync(path.join(root,configFile))) {
+  const config=JSON.parse(fs.readFileSync(path.join(root,configFile),'utf8'));
+  if(network==='ganache') {
+    const accounts=(await provider.send('eth_accounts',[])).map(getAddress);
+    config.owners=accounts.slice(0,5); config.guardians=accounts.slice(5,8);
+  }
+  const tx=await factory.createWallet(config); const r=await tx.wait();
+  const event=r.logs.map(l=>{try{return factory.interface.parseLog(l);}catch{return null;}}).find(l=>l?.name==='WalletCreated');
+  demoWallet=event.args.wallet;
 }
-const signer = await provider.getSigner(0);
-const artifact = JSON.parse(fs.readFileSync('artifacts/Treasury.json', 'utf8'));
-const factory = new ContractFactory(artifact.abi, artifact.bytecode, signer);
-const treasury = await factory.deploy();
-await treasury.waitForDeployment();
-
-const address = await treasury.getAddress();
-fs.mkdirSync('public', { recursive: true });
-fs.writeFileSync('public/deployment.json', JSON.stringify({
-  address, chainId: 1337, abi: artifact.abi
-}, null, 2));
-console.log('Treasury deployed:', address);
-console.log('Starting treasury balance: 0 test ETH');
+const deployment={chainId,factory:factoryAddress,factoryDeployedAtBlock:receipt.blockNumber,demoWallet,rpcUrlEnv:'VITE_RPC_URL'};
+for(const dir of ['deployments','public/deployments']) fs.writeFileSync(path.join(root,dir,`${chainId}.json`),JSON.stringify(deployment,null,2)+'\n');
+console.log(JSON.stringify(deployment,null,2));
+console.log('Deployment complete. Treasury starts empty. Deposit through the app.');
+provider.destroy();

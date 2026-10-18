@@ -1,18 +1,40 @@
 {
-  "name": "damd-treasury-milestone2",
-  "version": "0.1.0",
+  "name": "damd-treasury-wallet",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "engines": {"node": ">=22.12.0"},
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
-    "lint": "eslint .",
+    "preview": "vite preview --host 127.0.0.1",
     "compile": "node scripts/compile.mjs",
     "chain": "node scripts/chain.mjs",
     "deploy": "node scripts/deploy.mjs",
-    "test": "node --test test/*.test.mjs"
+    "smoke": "node scripts/smoke.mjs",
+    "test": "npm run compile && node --test --test-concurrency=1 test/*.test.mjs",
+    "lint": "eslint .",
+    "check": "npm run lint && npm test && npm run build",
+    "test:browser": "node scripts/browser-test.mjs"
   },
-  "dependencies": {"ethers": "6.17.0", "react": "19.1.1", "react-dom": "19.1.1"},
-  "devDependencies": {"vite": "7.1.7", "solc": "0.8.24", "ganache": "7.9.2", "eslint": "9.36.0", "@eslint/js": "9.36.0", "globals": "16.4.0"}
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "ethers": "6.17.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.36.0",
+    "eslint": "9.36.0",
+    "globals": "16.4.0",
+    "eslint-plugin-react-hooks": "5.2.0",
+    "vite": "7.1.7",
+    "@vitejs/plugin-react": "5.0.4",
+    "solc": "0.8.24",
+    "ganache": "7.9.2",
+    "@openzeppelin/contracts": "5.0.2",
+    "fast-check": "4.3.0",
+    "@playwright/test": "1.56.1"
+  }
 }

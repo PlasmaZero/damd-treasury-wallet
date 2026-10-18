@@ -1,6 +1,10 @@
 node_modules/
 dist/
 artifacts/
-public/deployment.json
 .env
-*.log
+.env.*
+!.env.example
+coverage/
+test-results/
+playwright-report/
+.DS_Store
