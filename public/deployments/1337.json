@@ -1,7 +1,0 @@
-{
-  "chainId": 1337,
-  "factory": null,
-  "factoryDeployedAtBlock": 0,
-  "demoWallet": null,
-  "rpcUrlEnv": "VITE_RPC_URL"
-}

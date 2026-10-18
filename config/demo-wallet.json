@@ -1,5 +1,0 @@
-{
-  "threshold": 3, "guardianThreshold": 2,
-  "limits": {"perTxCap":"2000000000000000000","dailyCap":"5000000000000000000","smallTierCap":"500000000000000000"},
-  "delays": {"smallTierDelay":15,"largeTierDelay":60,"governanceDelay":120,"recoveryDelay":180,"proposalTTL":86400,"recoveryTTL":86400}
-}
