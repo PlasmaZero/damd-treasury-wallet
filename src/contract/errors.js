@@ -1,0 +1,12 @@
+export const ERROR_MESSAGES={
+NotOwner:'Only a current owner can do that.',NotGuardian:'Only a current guardian can do that.',NotAuthorized:'This account cannot perform that action.',
+InvalidAddress:'Use a valid nonzero address other than this treasury.',DuplicateAddress:'That address is already a member.',RoleOverlap:'Owners and guardians cannot overlap.',TooManyMembers:'A role can contain at most 20 members.',InvalidThreshold:'The threshold must be between 1 and the number of members.',InvalidLimits:'Limits must satisfy 0 < small tier ≤ per-payment cap ≤ daily cap.',InvalidDelays:'The delays or expiry periods do not satisfy the required ordering.',InvalidAction:'The governance action or its parameters are invalid.',AmountZero:'Enter an amount greater than zero.',AboveTxCap:'This payment exceeds the per-payment cap.',DailyCapExceeded:'This payment would exceed the current daily cap.',InsufficientBalance:'The treasury has insufficient ETH.',UnknownProposal:'That proposal does not exist.',UnknownRecovery:'That recovery does not exist.',AlreadyApproved:'This account already approved.',NotApproved:'This account has not approved.',AlreadyVoted:'This account already voted to cancel.',WrongStatus:'This action is unavailable in the current status.',TimelockActive:'The timelock has not finished.',RequestExpired:'This request has expired.',BelowThreshold:'There are not enough current approvals.',RecoveryAlreadyActive:'An active recovery already uses this owner or replacement address.',NewOwnerNotConfirmed:'The replacement account must confirm the recovery first.',TransferFailed:'The recipient rejected the transfer.',ReentrancyGuardReentrantCall:'Blocked: re-entrant call.',USER_REJECTED:'You rejected the request in MetaMask.',WRONG_NETWORK:'Switch MetaMask to the configured network.',UNKNOWN:'Transaction failed.'
+};
+export function toTxError(raw,iface) {
+  if(raw?.code && ERROR_MESSAGES[raw.code]) return raw;
+  let code=raw?.code===4001||raw?.code==='ACTION_REJECTED'||raw?.info?.error?.code===4001?'USER_REJECTED':'UNKNOWN';
+  const candidates=[raw?.data,raw?.data?.result,raw?.error?.data,raw?.info?.error?.data,raw?.info?.error?.data?.result,raw?.cause?.data];
+  for(const data of candidates) if(typeof data==='string'&&data.startsWith('0x')) {try {const name=iface?.parseError(data)?.name;if(name) {code=name;break;}} catch { /* RPC may return non-ABI data. */ }}
+  const error=new Error(ERROR_MESSAGES[code]??ERROR_MESSAGES.UNKNOWN);
+  error.code=code; error.details=raw?.shortMessage??raw?.message??String(raw); return error;
+}
