@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 import {TreasuryProposals} from "./TreasuryProposals.sol";
+
 abstract contract TreasuryGovernance is TreasuryProposals {
+
     // Only static tuples are accepted. Check length and address/uint64 padding before decode.
     function _validateEncoding(ActionType a,bytes memory p) private pure {
         uint256 words=a==ActionType.ReplaceOwner ? 2 : a==ActionType.SetLimits ? 3 : a==ActionType.SetDelays ? 6 : 1;
@@ -11,6 +13,7 @@ abstract contract TreasuryGovernance is TreasuryProposals {
         }
         if(a==ActionType.SetDelays) for(uint256 i;i<6;++i) { uint256 v; assembly { v := mload(add(add(p,32),mul(i,32))) } if(v>type(uint64).max) revert InvalidAction(); }
     }
+    
     function _validateAction(ActionType a,bytes memory p) internal view override {
         _validateEncoding(a,p);
         if(a==ActionType.AddOwner) { _checkOwner(abi.decode(p,(address))); if(_owners.length>=20) revert TooManyMembers(); }

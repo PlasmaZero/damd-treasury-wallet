@@ -1,11 +1,24 @@
-import fs from 'node:fs';
-import {JsonRpcProvider,Contract} from 'ethers';
-const chainId=process.env.CHAIN_ID??'1337';
-const d=JSON.parse(fs.readFileSync(`deployments/${chainId}.json`));
-const p=new JsonRpcProvider(process.env.VITE_RPC_URL??'http://127.0.0.1:8545');
-if(Number((await p.getNetwork()).chainId)!==d.chainId) throw Error('Wrong chain');
-if(!d.demoWallet) throw Error('No demo wallet in deployment file');
-const abi=JSON.parse(fs.readFileSync('src/contract/abi/Treasury.json'));
-const c=new Contract(d.demoWallet,abi,p); const config=await c.getConfig();
-console.log(`Wallet ${d.demoWallet}: ${config.threshold}/${config.owners.length} owners; ${config.guardianThreshold}/${config.guardians.length} guardians; balance ${await p.getBalance(d.demoWallet)} wei`);
+
+import fs from "node:fs";
+import { JsonRpcProvider, Contract } from "ethers";
+
+const chainId = process.env.CHAIN_ID ?? "1337";
+const d = JSON.parse(fs.readFileSync(`deployments/${chainId}.json`));
+const p = new JsonRpcProvider(
+  process.env.VITE_RPC_URL ?? "http://127.0.0.1:8545",
+);
+
+if (Number((await p.getNetwork()).chainId) !== d.chainId)
+  throw Error("Wrong chain");
+
+if (!d.demoWallet) throw Error("No demo wallet in deployment file");
+
+const abi = JSON.parse(fs.readFileSync("src/contract/abi/Treasury.json"));
+const c = new Contract(d.demoWallet, abi, p);
+const config = await c.getConfig();
+
+console.log(
+  `Wallet ${d.demoWallet}: ${config.threshold}/${config.owners.length} owners; ${config.guardianThreshold}/${config.guardians.length} guardians; balance ${await p.getBalance(d.demoWallet)} wei`,
+);
+
 p.destroy();
