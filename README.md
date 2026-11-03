@@ -155,28 +155,91 @@ A workflow file alone does not prove your GitHub run passed; check the Actions t
 
 Restarting the chain removes all wallet state. Old deployments are not persistent.
 
-## Sepolia deployment (optional; not performed for this package)
+## Public deployment (Sepolia + GitHub Pages)
 
-1. Copy `.env.example` to `.env`.
-2. Set `SEPOLIA_RPC_URL` and `DEPLOYER_KEY` for a funded **test-only** deployer.
-3. Copy `config/demo-wallet.json` to `config/sepolia-wallet.json` and add real testnet
-   `owners` and `guardians` arrays. All amounts in that JSON are **wei strings**.
-4. Run:
+The hosted demo uses the Sepolia testnet, whose ETH is free and has no value, and serves
+the frontend from GitHub Pages. Graders need only a browser and MetaMask.
+
+### Deploy the contracts (once, from one team member's machine)
+
+1. Create a new MetaMask account used **only** for deploying. Get Sepolia ETH for it
+   from a faucet (for example the Google Cloud Web3 faucet or the Sepolia PoW faucet).
+   Deployment costs well under 0.1 SepoliaETH.
+2. Get a Sepolia RPC URL (Alchemy or Infura free tier, or
+   `https://ethereum-sepolia-rpc.publicnode.com`).
+3. Copy `.env.example` to `.env`. Set `SEPOLIA_RPC_URL` and `DEPLOYER_KEY` (the test-only
+   deployer's private key). `.env` is git-ignored; never commit it.
+4. Optional demo wallet: copy `config/demo-wallet.json` to `config/sepolia-wallet.json`
+   and add `owners` and `guardians` arrays with the team's Sepolia addresses (disjoint,
+   meeting the thresholds). Amounts are **wei strings**. Without this file, only the
+   factory is deployed and wallets are created in the UI.
+5. Run:
 
    ```sh
    npm run deploy -- --network sepolia
    ```
 
-5. Set `VITE_USE_MOCK=false`, `VITE_CHAIN_ID=11155111`, and `VITE_RPC_URL` to a Sepolia
-   browser-compatible RPC. Restart Vite or rebuild the frontend.
-6. Import/use your own funded Sepolia test accounts in MetaMask. Never use the local
-   development keys here. Build with `npm run build` and serve `dist/` for static hosting.
+6. Check the deployment (read-only, sends no transactions):
 
-If `config/sepolia-wallet.json` does not exist, the deploy command deploys just the
-factory. Create a wallet in the UI. `artifacts/standard-input.json` contains the exact
+   ```sh
+   npm run verify:deployment -- --network sepolia
+   ```
+
+7. Commit `deployments/11155111.json` and `public/deployments/11155111.json`. Contracts
+   are immutable: redeploy only if the Solidity changes, then commit the new record.
+
+### Deployment verification
+
+`npm run verify:deployment` (local chain) or `npm run verify:deployment -- --network sepolia`
+compiles the current source and checks the committed record against the chain. It exits
+non-zero if any check fails:
+
+- the record has only the expected fields, both copies match, and the RPC is on the right chain;
+- the factory and demo wallet run exactly the compiled `TreasuryFactory` and `Treasury`
+  (immutable values masked; a metadata-only difference means the source text changed);
+- `factoryDeployedAtBlock` equals the factory's own `deployedAtBlock()`, so the app scans
+  for wallets from the right block;
+- the recorded factory emitted `WalletCreated` for the demo wallet and lists it in
+  `walletsOf` for every owner and guardian;
+- the demo wallet's config matches `config/sepolia-wallet.json` (a warning only, since
+  governance can change it);
+- with `ETHERSCAN_API_KEY` set, both contracts have verified source on Etherscan.
+
+It uses `SEPOLIA_RPC_URL` if set, otherwise the public publicnode endpoint. The browser test
+runs it after its local deploy, and the GitHub Pages workflow runs it before publishing, so
+the site is never built against a record that does not match the chain.
+
+### Host the frontend
+
+1. A repository admin enables **Settings → Pages → Source: GitHub Actions** (one time).
+2. Optional: add a repository variable `VITE_RPC_URL` with an origin-restricted Sepolia
+   RPC URL. Without it, the site uses the public publicnode endpoint.
+3. Push to `main`, or run **Deploy frontend to GitHub Pages** from the Actions tab. The site
+   is published at https://plasmazero.github.io/damd-treasury-wallet/.
+
+The workflow skips publishing until `public/deployments/11155111.json` exists.
+
+To try the Sepolia build locally, set `VITE_CHAIN_ID=11155111` in `.env` and run `npm run dev`.
+
+### What graders need
+
+- Viewing balances, proposals, and history needs only the site URL.
+- Signing needs MetaMask and a little SepoliaETH. **Connect MetaMask** asks MetaMask to
+  switch to Sepolia automatically. To test owner/guardian actions, graders' addresses
+  must be members of a wallet: create one for them in the UI, or add them via governance.
+  You can also send them SepoliaETH from the deployer account so they can skip the faucet.
+
+Sepolia is public: anyone can call the contracts and every transaction is permanent and
+visible on Etherscan.
+
+### Source verification (optional)
+
+`artifacts/standard-input.json` contains the exact
 compiler input for source verification. Use Solidity 0.8.24, optimizer 200, EVM paris,
 and the factory contract path `contracts/TreasuryFactory.sol:TreasuryFactory`.
 Explorer verification and hosted deployment are manual tasks, not completed claims.
+After verifying on Etherscan, `ETHERSCAN_API_KEY=... npm run verify:deployment -- --network sepolia`
+confirms it.
 
 `VITE_*` values are public in the browser. Use an origin-restricted, rate-limited RPC
 credential; do not put a deployer key in a `VITE_*` variable.
@@ -205,7 +268,7 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 | `src/services/walletService.js` | ethers.js reads, previews, writes, subscriptions |
 | `src/services/mockWalletService.js` | Standalone frontend development fixtures |
 | `src/contract/` | Generated ABIs, parameter encoding, error messages |
-| `scripts/` | Compile, local chain, deploy, smoke, browser test |
+| `scripts/` | Compile, local chain, deploy, deployment verification, smoke, browser test |
 | `docs/ARCHITECTURE.md` | Architecture, UML, state machines, design decisions |
 
 ## Scope and limitations

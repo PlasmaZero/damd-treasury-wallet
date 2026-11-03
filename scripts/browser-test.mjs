@@ -13,7 +13,7 @@ let vite, browser, page; const errors = [];
 const paths = ['deployments/1337.json', 'public/deployments/1337.json']; const originals = paths.map(p => fs.existsSync(p) ? fs.readFileSync(p) : null);
 function run(file, args) { return new Promise((resolve, reject) => { const p = spawn(file, args, { stdio: 'inherit', env: process.env }); p.on('error', reject); p.on('exit', code => code === 0 ? resolve() : reject(Error(`${file} exited ${code}`))); }); }
 try {
-  await server.listen(8545, '127.0.0.1'); await run(process.execPath, ['scripts/deploy.mjs']);
+  await server.listen(8545, '127.0.0.1'); await run(process.execPath, ['scripts/deploy.mjs']); await run(process.execPath, ['scripts/verify-deployment.mjs']);
   const accounts = Object.keys(server.provider.getInitialAccounts());
   vite = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5174'], { env: { ...process.env, VITE_USE_MOCK: 'false', VITE_CHAIN_ID: '1337', VITE_RPC_URL: 'http://127.0.0.1:8545' }, stdio: 'pipe' });
   await new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(Error('Vite startup timed out')), 15000); vite.stdout.on('data', d => { if (d.toString().includes('127.0.0.1:5174')) { clearTimeout(timeout); resolve(); } }); vite.on('error', reject); });
