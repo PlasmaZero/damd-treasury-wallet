@@ -74,7 +74,11 @@ export function createWalletService(config) {
   async function recoveryView(id,ctx) {
     const {c,cfg,block,tag}=ctx,r=await c.getRecovery(id,tag);
     const [approvals,cancelVotes]=await Promise.all([votes(c,'hasRecoveryApproval',id,cfg.guardians,cfg.guardianThreshold,tag),votes(c,'hasVotedCancelRecovery',id,cfg.owners.filter(a=>a!==r.oldOwner),cfg.threshold,tag)]);
-    return {id,oldOwner:r.oldOwner,newOwner:r.newOwner,initiator:r.initiator,createdAt:Number(r.createdAt),readyAt:Number(r.readyAt),expiresAt:Number(r.expiresAt),newOwnerConfirmed:r.newOwnerConfirmed,status:viewStatus(r,block.timestamp),approvals,cancelVotes};
+    const contractStatus=viewStatus(r,block.timestamp);
+    const isActive=['Pending','Queued','Ready'].includes(contractStatus);
+    const invalidated=isActive&&!await c.isRecoveryTargetCurrent(id,tag);
+    const blockedReason=invalidated?'The targeted owner membership was removed or replaced. This recovery cannot execute; cancel it or let it expire.':isActive&&(cfg.owners.includes(r.newOwner)||cfg.guardians.includes(r.newOwner))?'The replacement address is already a member. Choose a fresh address in a new request, or resolve the membership conflict.':null;
+    return {id,oldOwner:r.oldOwner,newOwner:r.newOwner,initiator:r.initiator,createdAt:Number(r.createdAt),readyAt:Number(r.readyAt),expiresAt:Number(r.expiresAt),newOwnerConfirmed:r.newOwnerConfirmed,contractStatus,status:invalidated?'Invalidated':contractStatus,blockedReason,approvals,cancelVotes};
   }
   async function list(wallet,opts={},recovery=false) {
     const ctx=await context(wallet);const count=Number(await ctx.c[recovery?'recoveryCount':'proposalCount'](ctx.tag));
@@ -126,6 +130,15 @@ export function createWalletService(config) {
     globalThis.window?.addEventListener('focus',invalidate); listeners.add(invalidate);
     return ()=>{stopped=true;clearTimeout(timer);clearInterval(heartbeat);provider.off(filter,invalidate);provider.off('block',invalidate);listeners.delete(invalidate);globalThis.window?.removeEventListener('focus',invalidate);};
   }
+  async function scanLogs(filter,start,end) {
+    let size=2000;const result=[];
+    while(start<=end) {
+      const to=Math.min(start+size-1,end);let logs;
+      try{logs=await provider.getLogs({...filter,fromBlock:start,toBlock:to});}catch(error){if(size===1)throw error;size=Math.max(1,Math.floor(size/2));continue;}
+      result.push(...logs);start=to+1;
+    }
+    return result;
+  }
   const api={
     async connect() {
       if(!ethereum) throw Error('Install MetaMask to connect a wallet.');
@@ -133,20 +146,23 @@ export function createWalletService(config) {
     },getAccount:()=>account,
     onAccountOrChainChange(cb) {listeners.add(cb);return ()=>listeners.delete(cb);},
     async listWallets(a) {
-      const found=a&&config.factory?await factory().walletsOf(a):[];
-      const live=[];for(const w of found) {const c=treasury(w);if(await c.isOwner(a)||await c.isGuardian(a)) live.push(getAddress(w));}
+      const found=[];const end=await provider.getBlockNumber();
+      if(a&&config.factory) {
+        // Creation-time indexing misses later governance/recovery members. Discover the
+        // factory's wallets, then check authoritative membership at one block.
+        const f=factory();
+        const logs=await scanLogs({address:config.factory,topics:[factoryInterface.getEvent('WalletCreated').topicHash]},Number(await f.deployedAtBlock()),end);
+        for(const log of logs)found.push(factoryInterface.parseLog(log).args.wallet);
+      }
+      const live=[];for(const w of new Set(found)) {const c=treasury(w);if(await c.isOwner(a,{blockTag:end})||await c.isGuardian(a,{blockTag:end})) live.push(getAddress(w));}
       return [...new Set([...live,...known])];
     },addKnownWallet,snapshot,preview,subscribe,
     listProposals:(w,o)=>list(w,o),getProposal:async(w,id)=>proposalView(id,await context(w)),
     listRecoveries:(w,o)=>list(w,o,true),getRecovery:async(w,id)=>recoveryView(id,await context(w)),
     async getHistory(wallet) {
-      const c=treasury(wallet),end=await provider.getBlockNumber();let start=Number(await c.deployedAtBlock()),size=2000;const result=[];
-      while(start<=end) {
-        const to=Math.min(start+size-1,end);let logs;
-        try{logs=await provider.getLogs({address:wallet,fromBlock:start,toBlock:to});}catch(error){if(size===1)throw error;size=Math.max(1,Math.floor(size/2));continue;}
-        for(const log of logs) {const e=iface.parseLog(log);if(e) result.push({blockNumber:log.blockNumber,logIndex:log.index,txHash:log.transactionHash,event:e.name,args:e.args.toObject(true)});}
-        start=to+1;
-      }
+      const c=treasury(wallet),end=await provider.getBlockNumber(),result=[];
+      const logs=await scanLogs({address:wallet},Number(await c.deployedAtBlock()),end);
+      for(const log of logs) {const e=iface.parseLog(log);if(e) result.push({blockNumber:log.blockNumber,logIndex:log.index,txHash:log.transactionHash,event:e.name,args:e.args.toObject(true)});}
       return result.reverse();
     },
     createWallet:(c,o)=>write(null,'createWallet',[c],o),deposit:(w,a,o)=>write(w,'deposit',[a],o),

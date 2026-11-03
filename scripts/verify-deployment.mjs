@@ -6,6 +6,7 @@ import path from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import { JsonRpcProvider, Contract, getAddress } from "ethers";
 import { compile, root } from "./compile.mjs";
+import { getPublishedSource } from "./lib/explorer.mjs";
 
 if (fs.existsSync(path.join(root, ".env")))
   process.loadEnvFile(path.join(root, ".env"));
@@ -227,26 +228,14 @@ async function verify() {
       ["Treasury", d.demoWallet],
     ].filter(([, a]) => a))
       await check(`${name} source is verified on Etherscan`, async () => {
-        const url = new URL("https://api.etherscan.io/v2/api");
-        url.search = new URLSearchParams({
-          chainid: String(expectedChainId),
-          module: "contract",
-          action: "getsourcecode",
+        const source = await getPublishedSource({
           address,
-          apikey: process.env.ETHERSCAN_API_KEY,
+          contractName: name,
+          apiKey: process.env.ETHERSCAN_API_KEY,
         });
-        const body = await (await fetch(url)).json();
-        if (body.status !== "1") throw new Error(`Etherscan: ${body.result}`);
-        const [source] = body.result;
-        if (!source.SourceCode)
-          throw new Error(
-            `not verified; upload artifacts/standard-input.json at https://sepolia.etherscan.io/verifyContract?a=${address}`,
-          );
-        if (source.ContractName !== name)
-          throw new Error(
-            `verified as ${source.ContractName}, expected ${name}`,
-          );
-        return `https://sepolia.etherscan.io/address/${address}#code`;
+        if (!source)
+          throw new Error("not verified; run npm run verify:etherscan");
+        return source.url;
       });
 }
 

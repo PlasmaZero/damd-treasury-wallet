@@ -7,7 +7,7 @@
  * @typedef {{onSubmitted?:(hash:string)=>void}} WriteOpts
  * @typedef {{txHash:string,blockNumber:number,id?:number,wallet?:string}} WriteResult
  * @typedef {{count:number,needed:number,by:string[]}} VoteSummary
- * @typedef {'Pending'|'Queued'|'Ready'|'Executed'|'Cancelled'|'Expired'} ViewStatus
+ * @typedef {'Pending'|'Queued'|'Ready'|'Executed'|'Cancelled'|'Expired'|'Invalidated'} ViewStatus
  * @typedef {{ok:boolean,error?:TxError}} Preview
  * @typedef {{blockNumber:number,logIndex:number,txHash:string,event:string,args:object}} HistoryItem
  *
@@ -26,6 +26,9 @@
  * broadcast, and resolve only after one confirmation. They throw TxError on failure.
  * subscribe and onAccountOrChainChange return cleanup functions.
  *
+ * Recovery views also expose contractStatus and blockedReason (string or null).
+ * Invalidated is UI-only: an active recovery targets an obsolete owner membership.
+ * Direct/owner-vote cancellation remains available; execution is disabled.
  * Ready is UI-only: a Queued item whose chain timestamp is at least readyAt.
  * It does not guarantee execution: current quorum, caps, balance and membership are
  * still rechecked by the contract and transaction preview.

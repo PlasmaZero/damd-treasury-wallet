@@ -24,6 +24,11 @@ abstract contract TreasuryRecovery is TreasuryBase {
         r.status = _derived(r.status, r.expiresAt);
     }
 
+    function isRecoveryTargetCurrent(uint256 id) public view returns (bool) {
+        Recovery storage r = _recovery(id);
+        return isOwner[r.oldOwner] && _generation[r.oldOwner] == _oldGeneration[id];
+    }
+
     function _isActive(uint256 index) private view returns (bool) {
         if (index == 0) return false;
         Recovery storage r = _recoveries[index - 1];
@@ -180,8 +185,7 @@ abstract contract TreasuryRecovery is TreasuryBase {
             revert BelowThreshold();
         if (!r.newOwnerConfirmed) revert NewOwnerNotConfirmed();
         if (
-            !isOwner[r.oldOwner] ||
-            _generation[r.oldOwner] != _oldGeneration[id]
+            !isRecoveryTargetCurrent(id)
         ) revert NotOwner();
         _validateNewMember(r.newOwner);
         r.status = Status.Executed;

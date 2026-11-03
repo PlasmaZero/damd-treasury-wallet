@@ -2,11 +2,13 @@
 // Usage: npm run verify:etherscan [-- 0xOtherWallet ...] [-- --dry-run]
 // Extra addresses are wallets created through the recorded factory (e.g. in the UI).
 // --dry-run prints what would be submitted without calling Etherscan.
+// Submission and polling live in scripts/lib/explorer.mjs; this file only gathers the targets.
 import fs from "node:fs";
 import path from "node:path";
 import solc from "solc";
 import { JsonRpcProvider, Contract, Interface, getAddress } from "ethers";
 import { compile, root } from "./compile.mjs";
+import { getPublishedSource, verifySource } from "./lib/explorer.mjs";
 
 if (fs.existsSync(path.join(root, ".env")))
   process.loadEnvFile(path.join(root, ".env"));
@@ -16,7 +18,6 @@ const apiKey = process.env.ETHERSCAN_API_KEY;
 if (!apiKey && !dryRun) throw new Error("Set ETHERSCAN_API_KEY in .env.");
 const rpc =
   process.env.SEPOLIA_RPC_URL || "https://ethereum-sepolia-rpc.publicnode.com";
-const api = `https://api.etherscan.io/v2/api?chainid=${chainId}`;
 
 const d = JSON.parse(
   fs.readFileSync(path.join(root, `deployments/${chainId}.json`), "utf8"),
@@ -35,7 +36,7 @@ const input = JSON.parse(
 // Test-only contracts do not affect these bytecodes; keep them off Etherscan.
 for (const name of Object.keys(input.sources))
   if (name.startsWith("test/")) delete input.sources[name];
-const compilerVersion = `v${solc.version().match(/^[\d.]+\+commit\.[0-9a-f]+/)[0]}`;
+const compilerVersion = `v${solc.version().split(".Emscripten")[0]}`;
 
 const provider = new JsonRpcProvider(rpc, undefined, { cacheTimeout: 0 });
 if (Number((await provider.getNetwork()).chainId) !== chainId)
@@ -63,84 +64,75 @@ async function constructorArgs(wallet) {
     throw new Error(
       `${log.transactionHash} did not call createWallet directly`,
     );
-  return new Interface(artifacts.Treasury.abi)
-    .encodeDeploy([call.args.config])
-    .slice(2);
+  return new Interface(artifacts.Treasury.abi).encodeDeploy([call.args.config]);
 }
 
-async function etherscan(params, method = "GET") {
-  const body = new URLSearchParams({ ...params, apikey: apiKey });
-  const res =
-    method === "POST"
-      ? await fetch(api, { method, body })
-      : await fetch(`${api}&${body}`);
-  return res.json();
+// Submission IDs still in Etherscan's queue, so a rerun resumes them instead of resubmitting.
+const pendingFile = path.join(root, "artifacts/etherscan-pending.json");
+const pending = fs.existsSync(pendingFile)
+  ? JSON.parse(fs.readFileSync(pendingFile, "utf8"))
+  : {};
+function savePending(address, guid) {
+  if (guid) pending[address] = guid;
+  else delete pending[address];
+  fs.writeFileSync(pendingFile, JSON.stringify(pending, null, 2) + "\n");
 }
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-async function verify(address, artifact, args) {
+async function verify(address, artifact, constructorArguments = "") {
+  const contractName = `${artifact.sourceName}:${artifact.contractName}`;
   const label = `${artifact.contractName} ${address}`;
   if (dryRun) {
     console.log(
-      `DRY RUN  ${label}: ${artifact.sourceName}:${artifact.contractName}, ${compilerVersion}, ${Object.keys(input.sources).length} sources, constructor args ${args ? `${args.length / 2} bytes` : "none"}`,
+      `DRY RUN  ${label}: ${contractName}, ${compilerVersion}, ${Object.keys(input.sources).length} sources, constructor args ${constructorArguments ? `${(constructorArguments.length - 2) / 2} bytes` : "none"}`,
     );
     return true;
   }
-  const existing = await etherscan({
-    module: "contract",
-    action: "getsourcecode",
-    address,
-  });
-  if (existing.result?.[0]?.SourceCode) {
-    console.log(`DONE  ${label}: already verified`);
-    return true;
-  }
-  let guid;
-  // Etherscan can lag behind the chain for a freshly deployed contract.
-  for (let attempt = 1; !guid; attempt++) {
-    const r = await etherscan(
-      {
-        module: "contract",
-        action: "verifysourcecode",
-        codeformat: "solidity-standard-json-input",
-        sourceCode: JSON.stringify(input),
-        contractaddress: address,
-        contractname: `${artifact.sourceName}:${artifact.contractName}`,
-        compilerversion: compilerVersion,
-        constructorArguements: args ?? "", // Etherscan's spelling.
-      },
-      "POST",
-    );
-    if (r.status === "1") guid = r.result;
-    else if (/already verified/i.test(r.result)) {
-      console.log(`DONE  ${label}: already verified`);
-      return true;
-    } else if (/unable to locate contractcode/i.test(r.result) && attempt < 6)
-      await sleep(10000);
-    else {
-      console.log(`FAIL  ${label}: ${r.result}`);
-      return false;
-    }
-  }
-  for (let attempt = 0; attempt < 24; attempt++) {
-    await sleep(5000);
-    const r = await etherscan({
-      module: "contract",
-      action: "checkverifystatus",
-      guid,
+  const guid = pending[address];
+  try {
+    const published = await getPublishedSource({
+      address,
+      contractName,
+      apiKey,
     });
-    if (/pending/i.test(r.result)) continue;
-    const ok = r.status === "1" || /already verified/i.test(r.result);
-    console.log(`${ok ? "DONE" : "FAIL"}  ${label}: ${r.result}`);
-    return ok;
+    if (published) {
+      savePending(address, null);
+      console.log(`DONE  ${label}: already verified, ${published.url}`);
+      return true;
+    }
+    if (guid) console.log(`...   ${label}: resuming submission ${guid}`);
+    const result = await verifySource({
+      address,
+      contractName,
+      constructorArguments,
+      input,
+      compilerVersion,
+      apiKey,
+      guid,
+      onSubmitted: (id) => savePending(address, id),
+      onStatus: ({ attempt, attempts, stage, message }) =>
+        console.log(`...   ${label} [${stage} ${attempt}/${attempts}]: ${message}`),
+    });
+    savePending(address, null);
+    console.log(`DONE  ${label}: ${result.url}`);
+    return true;
+  } catch (e) {
+    if (e.code === "PENDING")
+      console.log(
+        `WAIT  ${label}: still in Etherscan's queue. Run npm run verify:etherscan later; it resumes this submission instead of resubmitting.`,
+      );
+    else {
+      // A failed or unknown submission is dropped so the next run submits afresh.
+      savePending(address, null);
+      console.log(`FAIL  ${label}: ${e.message}`);
+    }
+    return false;
   }
-  console.log(
-    `FAIL  ${label}: still pending; check Etherscan later (guid ${guid})`,
-  );
-  return false;
 }
 
 let failed = 0;
+console.log(
+  "Submitting to Etherscan. It can take a few minutes per contract; each reply is shown below.",
+);
 if (!(await verify(d.factory, artifacts.TreasuryFactory))) failed++;
 for (const wallet of wallets)
   if (
@@ -150,6 +142,6 @@ for (const wallet of wallets)
 provider.destroy();
 if (!dryRun && !failed)
   console.log(
-    `Verified. Explorer: https://sepolia.etherscan.io/address/${d.factory}#code\nRun npm run verify:deployment -- --network sepolia to confirm.`,
+    "Verified. Run npm run verify:deployment -- --network sepolia to confirm.",
   );
 process.exitCode = failed ? 1 : 0;

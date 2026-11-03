@@ -5,7 +5,7 @@ import {setup,sent,artifact,E} from './helpers/fixture.mjs';
 import {createWalletService} from '../src/services/walletService.js';
 import {createWalletService as mock,MOCK_WALLET,MOCK_ACCOUNTS} from '../src/services/mockWalletService.js';
 
-function walletAdapter(f){let index=0,wrong=false,reject=false;const callbacks={};return {on:(e,cb)=>{callbacks[e]=cb;},removeListener:()=>{},setAccount(i){index=i;callbacks.accountsChanged?.([f.accounts[i]]);},setWrong(v){wrong=v;callbacks.chainChanged?.(v?'0x1':'0x539');},reject(v){reject=v;},async request({method,params=[]}){if(method==='eth_requestAccounts'||method==='eth_accounts')return [f.accounts[index]];if(method==='eth_chainId'&&wrong)return '0x1';if(method==='eth_sendTransaction'&&reject)throw Object.assign(Error('Rejected'),{code:4001});return f.rpc.request({method,params});}};}
+function walletAdapter(f){let index=0,wrong=false,reject=false;const callbacks={};return {on:(e,cb)=>{(callbacks[e]??=new Set()).add(cb);},removeListener:(e,cb)=>callbacks[e]?.delete(cb),setAccount(i){index=i;callbacks.accountsChanged?.forEach(cb=>cb([f.accounts[i]]));},setWrong(v){wrong=v;callbacks.chainChanged?.forEach(cb=>cb(v?'0x1':'0x539'));},reject(v){reject=v;},async request({method,params=[]}){if(method==='eth_requestAccounts'||method==='eth_accounts')return [f.accounts[index]];if(method==='eth_chainId'&&wrong)return '0x1';if(method==='eth_sendTransaction'&&reject)throw Object.assign(Error('Rejected'),{code:4001});return f.rpc.request({method,params});}};}
 
 test('real service integrates creation, deposits, previews, approvals, execution, history and account changes',async()=>{
  const f=await setup();let api;
@@ -44,4 +44,37 @@ test('mock fixtures expose all statuses and target recovery; writes update mock 
 });
 test('mock previews never mutate state and reject unauthorized actions',async()=>{
  const api=mock();await api.connect();const before=(await api.snapshot(MOCK_WALLET)).balance;assert.equal((await api.preview(MOCK_WALLET,'deposit',[1n])).ok,true);assert.equal((await api.snapshot(MOCK_WALLET)).balance,before);api.mock.setAccount(MOCK_ACCOUNTS.at(-1).address);const result=await api.preview(MOCK_WALLET,'proposePayment',[MOCK_ACCOUNTS[0].address,1n]);assert.equal(result.error.code,'NotOwner');
+});
+
+test('fresh service discovers governance-added and recovered members across independent wallets',async()=>{
+ const f=await setup();try{
+  const factory=await f.deploy('TreasuryFactory'),eth=walletAdapter(f);
+  const make=()=>createWalletService({provider:f.provider,ethereum:eth,chainId:1337,factory:factory.target,storage:{getItem:()=>null,setItem:()=>{}}});
+  const api=make();await api.connect();const first=(await api.createWallet(f.config)).wallet,second=(await api.createWallet(f.config)).wallet;
+  const g=await api.proposeAction(first,'AddOwner',{owner:f.accounts[6]});eth.setAccount(1);await api.approve(first,g.id);await f.advance(60);await api.execute(first,g.id);
+  assert.deepEqual(await make().listWallets(f.accounts[6]),[first]);
+  eth.setAccount(3);const r=await api.initiateRecovery(first,f.accounts[2],f.accounts[8]);eth.setAccount(4);await api.approveRecovery(first,r.id);eth.setAccount(8);await api.confirmRecovery(first,r.id);await f.advance(60);await api.executeRecovery(first,r.id);
+  assert.deepEqual(await make().listWallets(f.accounts[8]),[first]);
+  assert.deepEqual(await make().listWallets(f.accounts[2]),[second]);
+  assert.equal((await api.snapshot(second)).balance,0n);assert.equal((await api.snapshot(second)).proposalCount,0);
+ }finally{f.provider.destroy();await f.rpc.disconnect();}
+});
+
+test('service exposes invalidated recovery with cancellation still available',async()=>{
+ const f=await setup();try{
+  const eth=walletAdapter(f),api=createWalletService({provider:f.provider,ethereum:eth,chainId:1337,storage:{getItem:()=>null,setItem:()=>{}}}),w=f.wallet.target;
+  await api.connect();eth.setAccount(3);const r=await api.initiateRecovery(w,f.accounts[2],f.accounts[8]);
+  eth.setAccount(0);const g=await api.proposeAction(w,'ReplaceOwner',{oldOwner:f.accounts[2],newOwner:f.accounts[7]});eth.setAccount(1);await api.approve(w,g.id);await f.advance(60);await api.execute(w,g.id);
+  const view=await api.getRecovery(w,r.id);assert.equal(view.status,'Invalidated');assert.equal(view.contractStatus,'Pending');assert.match(view.blockedReason,/removed or replaced/);
+  eth.setAccount(2);await api.cancelRecovery(w,r.id);const cancelled=await api.getRecovery(w,r.id);assert.equal(cancelled.status,'Cancelled');assert.equal(cancelled.blockedReason,null);
+ }finally{f.provider.destroy();await f.rpc.disconnect();}
+});
+
+test('mock marks a replaced recovery target invalid and still permits direct cancellation',async()=>{
+ const api=mock();await api.connect();const target=MOCK_ACCOUNTS[1].address;
+ const p=await api.proposeAction(MOCK_WALLET,'ReplaceOwner',{oldOwner:target,newOwner:'0x000000000000000000000000000000000000000b'});
+ for(const i of [4,5]){api.mock.setAccount(MOCK_ACCOUNTS[i].address);await api.approve(MOCK_WALLET,p.id);}
+ api.mock.advanceTime(121);await api.execute(MOCK_WALLET,p.id);
+ const view=await api.getRecovery(MOCK_WALLET,1);assert.equal(view.status,'Invalidated');assert.match(view.blockedReason,/removed or replaced/);
+ api.mock.setAccount(target);await api.cancelRecovery(MOCK_WALLET,1);assert.equal((await api.getRecovery(MOCK_WALLET,1)).status,'Cancelled');
 });

@@ -21,7 +21,8 @@ The older context recommends a future Foundry migration; that migration is not i
 The internal voting storage extends the sketch with **membership generations**. Votes
 record the member's generation when cast. Removing/replacing a member makes those votes
 inactive; re-adding the same address increments its generation, so old votes cannot revive.
-The ABI is unchanged. The recovery also remembers the target's generation, preventing a
+The generation-aware voting implementation preserved the original ABI. M4 adds only
+the read-only isRecoveryTargetCurrent(uint256) view; existing methods/enums are unchanged. The recovery also remembers the target's generation, preventing a
 stale recovery from targeting a later rejoined membership. A regression test covers
 remove/re-add vote invalidation. The internal sketches were not a merged repository here;
 review these changes jointly with the contract and frontend leads before merging.
@@ -58,3 +59,15 @@ is allowed by the frozen spec, so its owner controls actions alone. Use demo fun
 - ethers v6 contracts/providers: https://docs.ethers.org/v6/single-page/
 - OpenZeppelin utilities: https://docs.openzeppelin.com/contracts/5.x/api/utils
 - Dependency versions are pinned; source verification uses the emitted standard JSON input.
+
+
+## Public testnet deployment: manual deploy, automated verification
+
+Contracts are deployed manually from a team member's machine; CI never deploys. A CI deploy
+job would need a funded private key as a repository secret and would replace the team's
+treasury record with disposable fixtures on each run, while the contracts are immutable and
+only need deploying when the Solidity changes. Verification is automated instead: the GitHub
+Pages workflow runs the read-only `verify:deployment` check before publishing, so the hosted
+site is never built against a record that does not match the chain. Each step has one owner:
+`deploy.mjs` deploys, `verify-etherscan.mjs` (via `scripts/lib/explorer.mjs`) publishes source,
+`verify-deployment.mjs` checks, and `pages.yml` builds and publishes the frontend.

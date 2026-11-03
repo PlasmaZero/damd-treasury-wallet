@@ -4,6 +4,17 @@ A complete **local test-fund MVP** for the DAMD shared treasury project: React +
 ethers.js + MetaMask, backed by immutable Solidity contracts. This replaces the
 Milestone 2 deposit-only prototype. It is not audited and must not hold real funds.
 
+## Milestone 4 checkpoint
+
+This package completes the local feature implementation and documents the test plan.
+See [M4 changes and scope](docs/MILESTONE4.md) and the [full test plan](docs/TEST_PLAN.md).
+Sepolia contracts are deployed manually and checked automatically before every frontend
+publish; see [Public deployment](#public-deployment-sepolia--github-pages). Broader integration acceptance and final release/report
+remain later work. Developer regression checks are not final acceptance.
+
+**Redeploy locally after extracting this version:** M4 adds a read-only recovery-validity
+view, so existing immutable M3 contracts cannot serve the updated frontend.
+
 ## What works
 
 - Create multiple treasury wallets with independent members and rules.
@@ -24,7 +35,7 @@ There is no custom backend, database, proxy upgrade key, or privileged team admi
 ## 1. Install
 
 Use **Node.js 22.12 or later**, npm, and the MetaMask browser extension.
-The project was checked with Node 24.19; CI uses Node 22.
+This M4 checkpoint was checked with Node 24.14.1; CI is configured for Node 22.
 
 ```sh
 npm ci
@@ -107,9 +118,11 @@ Lost key: guardians initiate a recovery to a new address. Stolen key: owners use
 **Governance → Replace Owner**; a thief holding the old key can veto guardian recovery.
 Recovery replaces an address; it never reconstructs a private key.
 
-The replacement account must confirm before recovery executes. An observer/new
-owner can select the demo wallet or manually add its address, even though the
-factory's creation-time membership index does not list that new address.
+The replacement account must confirm before recovery executes. New owners/guardians
+are discovered by scanning the configured factory's creation events and checking current
+membership, including in a fresh browser. Wallets from another factory can be added by address.
+Stale recoveries display Invalidated and explain why execution is blocked; cancellation
+remains available. Threshold warnings explain single-owner control and unavailable veto routes.
 
 ## Mock frontend mode
 
@@ -159,6 +172,10 @@ Restarting the chain removes all wallet state. Old deployments are not persisten
 
 The hosted demo uses the Sepolia testnet, whose ETH is free and has no value, and serves
 the frontend from GitHub Pages. Graders need only a browser and MetaMask.
+
+Each step happens in exactly one place: contracts are deployed manually with
+`npm run deploy -- --network sepolia` (CI never holds a deployer key or sends transactions),
+and the frontend is built and published only by the GitHub Pages workflow.
 
 ### Deploy the contracts (once, from one team member's machine)
 
@@ -292,7 +309,8 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 - A colluding approval quorum cannot be distinguished from legitimate approvals.
   Limits and cancellation windows constrain actions; they do not eliminate collusion.
 - No unanimous fast path: approvals received after queueing never shorten/restart its timer.
-- Factory discovery reflects membership at creation. New members can add a wallet by address.
+- Factory membership indexing reflects creation time; the frontend scans factory events
+  and checks current membership. Large factory histories need an indexer beyond this MVP.
 - History scans logs in chunks; very large histories need indexing/pagination beyond this MVP.
 - Sepolia funding/deployment/verification and the manual MetaMask walkthrough remain your tasks.
 - Slither and Foundry are not part of this package; the story's Ganache/Node toolchain is used.
@@ -301,3 +319,4 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 
 Pinned versions are in `package.json` and `package-lock.json`. The implementation choices
 and differences from the input documents are recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
+

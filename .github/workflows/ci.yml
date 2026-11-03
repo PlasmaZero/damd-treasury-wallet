@@ -1,4 +1,6 @@
 name: CI
+# Local checks only. Sepolia contracts are deployed manually (npm run deploy -- --network sepolia)
+# and the frontend is published by pages.yml, so this workflow holds no keys and sends no transactions.
 on:
   push:
   pull_request:
@@ -7,7 +9,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

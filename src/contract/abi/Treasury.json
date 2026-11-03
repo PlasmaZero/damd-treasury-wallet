@@ -1263,6 +1263,25 @@
         "type": "uint256"
       }
     ],
+    "name": "isRecoveryTargetCurrent",
+    "outputs": [
+      {
+        "internalType": "bool",
+        "name": "",
+        "type": "bool"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "uint256",
+        "name": "id",
+        "type": "uint256"
+      }
+    ],
     "name": "liveApprovals",
     "outputs": [
       {
