@@ -47,7 +47,10 @@ export default function App() {
   },[retry]);
   useEffect(()=>{if(!service)return;return service.onAccountOrChainChange(()=>{generation.current++;setAccount(service.getAccount());setReview(null);setSnap(null);setProposals([]);setRecoveries([]);});},[service]);
   useEffect(()=>{generation.current++;setSnap(null);setProposals([]);setRecoveries([]);setHistory([]);setReview(null);},[wallet,account]);
-  useEffect(()=>{if(!service)return;let current=true;service.listWallets(account).then(list=>{if(current)setWallets(list);}).catch(e=>{if(current)setError(e.message);});return()=>{current=false;};},[service,account,wallet,snap?.blockNumber]);
+  // Membership only changes through transactions, so rescan the factory after a confirmed one
+  // rather than on every block (the scan reads the factory's whole log history).
+  const confirmedTx=status?.state==='success'?status.hash:null;
+  useEffect(()=>{if(!service)return;let current=true;service.listWallets(account).then(list=>{if(current)setWallets(list);}).catch(e=>{if(current)setError(e.message);});return()=>{current=false;};},[service,account,wallet,confirmedTx]);
   const refresh=useCallback(async()=>{
     if(!service||!wallet)return;
     if(loadingRef.current){reloadRef.current=true;return;}

@@ -8,7 +8,10 @@ const CHAINS={1337:{chainName:'DAMD Local'},11155111:{chainName:'Sepolia',blockE
 
 export function createWalletService(config) {
   const ethereum=config.ethereum??globalThis.window?.ethereum;
-  const provider=config.provider??new JsonRpcProvider(config.rpcUrl,undefined,{cacheTimeout:0,pollingInterval:2000});
+  // staticNetwork stops ethers sending eth_chainId before most reads (it was ~40% of all RPC calls);
+  // assertNetwork checks the RPC's chain once instead. Sepolia mines every ~12s, so poll less often.
+  const provider=config.provider??new JsonRpcProvider(config.rpcUrl,config.chainId,{staticNetwork:true,cacheTimeout:0,pollingInterval:config.chainId===1337?2000:4000});
+  let rpcChain=null;
   let account=null, session=0;
   const listeners=new Set();
   const storage=config.storage??globalThis.localStorage;
@@ -24,8 +27,8 @@ export function createWalletService(config) {
   const chainChanged=id=>{session++;if(Number(id)!==config.chainId)account=null;notify();};
   ethereum?.on?.('accountsChanged',changed); ethereum?.on?.('chainChanged',chainChanged); ethereum?.on?.('disconnect',chainChanged);
   async function assertNetwork() {
-    const network=await provider.getNetwork();
-    if(Number(network.chainId)!==config.chainId) throw Object.assign(new Error('RPC network does not match the selected network.'),{code:'WRONG_NETWORK'});
+    rpcChain??=provider.send('eth_chainId',[]).then(Number).catch(e=>{rpcChain=null;throw e;});
+    if(await rpcChain!==config.chainId) throw Object.assign(new Error('RPC network does not match the selected network.'),{code:'WRONG_NETWORK'});
     if(ethereum&&Number(await ethereum.request({method:'eth_chainId'}))!==config.chainId) throw toTxError({code:'WRONG_NETWORK'});
   }
   async function switchChain() {
@@ -50,12 +53,20 @@ export function createWalletService(config) {
     return s;
   }
   const normalizeConfig=c=>({owners:[...c.owners],guardians:[...c.guardians],threshold:Number(c.threshold),guardianThreshold:Number(c.guardianThreshold),limits:Object.fromEntries(['perTxCap','dailyCap','smallTierCap'].map(k=>[k,c.limits[k]])),delays:Object.fromEntries(['smallTierDelay','largeTierDelay','governanceDelay','recoveryDelay','proposalTTL','recoveryTTL'].map(k=>[k,Number(c.delays[k])]))});
+  // Code and config cannot change within a block, so a snapshot and both lists in one refresh
+  // share a single getCode/getConfig read for that block instead of repeating it three times.
+  let cached=null;
   async function context(wallet) {
     const c=treasury(wallet); const block=await provider.getBlock('latest');
     if(!block) throw Error('No block received from RPC.');
-    const tag={blockTag:block.number};
-    if(await provider.getCode(wallet,block.number)==='0x') throw Error('No treasury contract at this address. Redeploy after restarting the local chain.');
-    const cfg=normalizeConfig(await c.getConfig(tag)); return {c,block,tag,cfg};
+    const tag={blockTag:block.number},id=`${getAddress(wallet)}@${block.hash}`;
+    if(cached?.id!==id) cached={id,cfg:(async()=>{
+      if(await provider.getCode(wallet,block.number)==='0x') throw Error('No treasury contract at this address. Redeploy after restarting the local chain.');
+      return normalizeConfig(await c.getConfig(tag));
+    })()};
+    const entry=cached;let cfg;
+    try {cfg=await entry.cfg;} catch(e) {if(cached===entry)cached=null;throw e;}
+    return {c,block,tag,cfg};
   }
   async function snapshot(wallet) {
     const {c,block,tag,cfg}=await context(wallet);
@@ -123,12 +134,13 @@ export function createWalletService(config) {
   function subscribe(wallet,cb) {
     let timer,stopped=false;
     const invalidate=()=>{clearTimeout(timer);timer=setTimeout(()=>{if(!stopped)cb();},150);};
-    const filter={address:wallet};
-    provider.on(filter,invalidate);provider.on('block',invalidate);
-    // Keep timelocks current even when an RPC drops a filter or block subscription.
-    const heartbeat=setInterval(invalidate,5000);
+    // Every wallet event lands in a new block, so the block subscription alone triggers refreshes;
+    // a separate log filter only duplicated them. Timelock status also only moves with blocks.
+    provider.on('block',invalidate);
+    // Slow fallback in case block polling stalls (e.g. a flaky RPC).
+    const heartbeat=setInterval(invalidate,30000);
     globalThis.window?.addEventListener('focus',invalidate); listeners.add(invalidate);
-    return ()=>{stopped=true;clearTimeout(timer);clearInterval(heartbeat);provider.off(filter,invalidate);provider.off('block',invalidate);listeners.delete(invalidate);globalThis.window?.removeEventListener('focus',invalidate);};
+    return ()=>{stopped=true;clearTimeout(timer);clearInterval(heartbeat);provider.off('block',invalidate);listeners.delete(invalidate);globalThis.window?.removeEventListener('focus',invalidate);};
   }
   async function scanLogs(filter,start,end) {
     let size=2000;const result=[];
