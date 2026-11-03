@@ -312,11 +312,30 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 - Factory membership indexing reflects creation time; the frontend scans factory events
   and checks current membership. Large factory histories need an indexer beyond this MVP.
 - History scans logs in chunks; very large histories need indexing/pagination beyond this MVP.
-- Sepolia funding/deployment/verification and the manual MetaMask walkthrough remain your tasks.
+- The persistent team deployment and manual MetaMask walkthrough remain team tasks. A separate
+  manually triggered CI workflow automates deployment and security checks for disposable Sepolia wallets.
 - Slither and Foundry are not part of this package; the story's Ganache/Node toolchain is used.
 - This code is generated with AI assistance. Review it as a team and disclose assistance
   according to the course policy. It is not an independent security audit.
 
 Pinned versions are in `package.json` and `package-lock.json`. The implementation choices
 and differences from the input documents are recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
+
+## Public Sepolia security tests
+
+Run **Actions → Public Sepolia acceptance → Run workflow** on main after configuring
+the deployment secrets and public browser RPC variable. The workflow deploys disposable
+contracts, tests real public transactions and expected security rejections, verifies their
+Etherscan sources, and checks a production frontend against the resulting state. It uploads
+receipts, explorer links, screenshots and a machine-readable report. The existing hosted
+treasury and its deployment records are preserved.
+
+See [setup and evidence requirements](docs/PUBLIC_SEPOLIA_TESTS.md). Local rehearsal:
+
+```bash
+npm run test:sepolia:rehearse
+```
+
+The public feedback item is complete only after the public job passes and its evidence
+report records `mode: public`, `chainId: 11155111`, `status: passed` and a passing frontend.
 
