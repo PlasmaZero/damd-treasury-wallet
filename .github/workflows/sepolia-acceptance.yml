@@ -1,0 +1,89 @@
+name: Public Sepolia acceptance
+
+# An operator starts a run deliberately; every subsequent deployment/check is automated.
+# Disposable contracts are independent of the persistent treasury hosted by pages.yml.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sepolia-acceptance
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      - run: git diff --exit-code -- src/contract/abi
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:sepolia:rehearse
+      - name: Confirm team deployment records were preserved
+        run: git diff --exit-code -- deployments public/deployments
+
+  sepolia:
+    name: Deploy and verify public Sepolia
+    needs: rehearse
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: sepolia
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Deploy disposable contracts, test real transactions, verify sources
+        run: npm run test:sepolia
+        env:
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          DEPLOYER_KEY: ${{ secrets.DEPLOYER_KEY }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+          SEPOLIA_BROWSER_RPC_URL: ${{ vars.SEPOLIA_BROWSER_RPC_URL }}
+          SEPOLIA_MAX_SPEND_ETH: '0.1'
+          SEPOLIA_MAX_FEE_GWEI: '10'
+          SEPOLIA_CONFIRMATIONS: '2'
+      - name: Build the disposable acceptance frontend
+        run: npm run test:sepolia:build
+        env:
+          SEPOLIA_BROWSER_RPC_URL: ${{ vars.SEPOLIA_BROWSER_RPC_URL }}
+      - run: npx playwright install --with-deps chromium
+      - name: Check frontend against public Sepolia
+        run: npm run test:sepolia:ui
+        env:
+          SEPOLIA_BROWSER_RPC_URL: ${{ vars.SEPOLIA_BROWSER_RPC_URL }}
+      - name: Confirm team deployment records were preserved
+        run: git diff --exit-code -- deployments public/deployments
+      - name: Write evidence summary
+        if: always()
+        run: npm run test:sepolia:summary
+      - name: Save public evidence, including partial failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sepolia-evidence-${{ github.run_id }}
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            test-results/sepolia/evidence.json
+            test-results/sepolia/deployment.json
+            test-results/sepolia/verification-input.json
+            test-results/sepolia/*.png
+            artifacts/standard-input.json
+      - name: Save the frontend tested against this disposable deployment
+        uses: actions/upload-artifact@v4
+        with:
+          name: sepolia-acceptance-frontend-${{ github.run_id }}
+          path: test-results/sepolia/app/dist
