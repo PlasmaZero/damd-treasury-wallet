@@ -1,7 +1,7 @@
 {
   "chainId": 11155111,
-  "factory": "0x2B418Cbc4Af069057ce2ef13b4682c42a179C21F",
-  "factoryDeployedAtBlock": 12052677,
-  "demoWallet": "0x26Cf69141e39a64C1E3395938A00cf6cEF55Ac60",
+  "factory": "0xb8A30D71491d497Cb36994F1458815Bb8Bb1e6EC",
+  "factoryDeployedAtBlock": 12056362,
+  "demoWallet": "0x1B3a0cCAA6a6de43cB19eAa69DA775A41dA94052",
   "rpcUrlEnv": "VITE_RPC_URL"
 }

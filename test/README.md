@@ -84,12 +84,7 @@ The full planned coverage and manual acceptance scenarios are in docs/TEST_PLAN.
 
 Five explorer-client cases cover exact compiler/constructor submission, pending verification,
 already-verified source/compiler checks, bounded timeout, rejected bytecode/credentials redaction,
-and indexing-delay retry (grouped into five named tests). Three public-journey cases cover
-runtime comparison, wrong-network/budget rejection, and the complete multi-signer transaction
-journey on an isolated local chain. Total named Node tests are now 51: the earlier 43 plus
-these 8 automation regressions. Public runtime checks cannot be inferred from those counts.
-
-`npm run test:sepolia:rehearse` additionally builds an isolated app copy and rehearses the
-production UI checks against the journey's real local contracts. It preserves the main local
-deployment files. Neither that rehearsal nor mocked explorer responses count as an actual
-Sepolia acceptance run. See docs/SEPOLIA_CI.md for the separate public CI job and evidence.
+and indexing-delay retry (grouped into five named tests). Mocked explorer responses do not
+count as a real Sepolia check; that is `npm run verify:deployment -- --network sepolia`, which
+the GitHub Pages workflow runs before publishing. The browser test also runs it against its
+fresh local deployment.

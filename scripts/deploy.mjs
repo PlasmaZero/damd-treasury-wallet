@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { JsonRpcProvider, Wallet, ContractFactory, getAddress } from "ethers";
 import { compile, root } from "./compile.mjs";
 
@@ -15,6 +16,19 @@ if (chainId !== (network === "sepolia" ? 11155111 : 1337))
   throw new Error("Wrong deployment network.");
 if (network === "sepolia" && !process.env.DEPLOYER_KEY)
   throw new Error("Set DEPLOYER_KEY in .env.");
+if (network === "sepolia") {
+  // Describe a malformed key's shape without ever printing the key itself.
+  const key = process.env.DEPLOYER_KEY.trim().replace(/^["']|["']$/g, "");
+  if (!/^(0x)?[0-9a-fA-F]{64}$/.test(key)) {
+    const words = key.split(/\s+/).length;
+    throw new Error(
+      words >= 12
+        ? `DEPLOYER_KEY looks like a ${words}-word recovery phrase. Use the account's private key instead (MetaMask → Account details → Show private key).`
+        : `DEPLOYER_KEY must be 64 hex characters (optional 0x prefix); found ${key.replace(/^0x/, "").length} characters${/^(0x)?[0-9a-fA-F]*$/.test(key) ? "" : " including non-hex ones"}.`,
+    );
+  }
+  process.env.DEPLOYER_KEY = key;
+}
 const signer =
   network === "sepolia"
     ? new Wallet(process.env.DEPLOYER_KEY, provider)
@@ -40,6 +54,10 @@ if (fs.existsSync(path.join(root, configFile))) {
     const accounts = (await provider.send("eth_accounts", [])).map(getAddress);
     config.owners = accounts.slice(0, 5);
     config.guardians = accounts.slice(5, 8);
+  } else if (!config.owners?.length || !config.guardians?.length) {
+    throw new Error(
+      `Add your team's Sepolia owners and guardians arrays to ${configFile}.`,
+    );
   }
   const tx = await factory.createWallet(config);
   const r = await tx.wait();
@@ -67,7 +85,38 @@ for (const dir of ["deployments", "public/deployments"])
     JSON.stringify(deployment, null, 2) + "\n",
   );
 console.log(JSON.stringify(deployment, null, 2));
+if (network === "sepolia") {
+  console.log(
+    `Factory: https://sepolia.etherscan.io/address/${factoryAddress}`,
+  );
+  if (demoWallet)
+    console.log(
+      `Demo wallet: https://sepolia.etherscan.io/address/${demoWallet}`,
+    );
+}
 console.log(
   "Deployment complete. Treasury starts empty. Deposit through the app.",
 );
 provider.destroy();
+if (network === "sepolia") {
+  // Publish the source now so the Pages workflow's Etherscan check passes.
+  if (!process.env.ETHERSCAN_API_KEY)
+    console.log(
+      "Set ETHERSCAN_API_KEY in .env and run npm run verify:etherscan to publish the source.",
+    );
+  else if (
+    spawnSync(
+      process.execPath,
+      [path.join(root, "scripts/verify-etherscan.mjs")],
+      {
+        stdio: "inherit",
+      },
+    ).status !== 0
+  )
+    console.log(
+      "Etherscan verification did not finish. The contracts ARE deployed; do not redeploy. Run npm run verify:etherscan to retry.",
+    );
+  console.log(
+    `Commit deployments/${chainId}.json and public/deployments/${chainId}.json so the hosted site can find these contracts.`,
+  );
+}

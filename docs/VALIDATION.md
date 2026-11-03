@@ -36,23 +36,12 @@ for this checkpoint. They remain in the integration plan in TEST_PLAN.md. No sec
 coverage percentage, final acceptance or final release is claimed.
 
 
-## Automated public testnet followup validation
+## Public testnet validation
 
-Checked locally on November 2, 2026 with Node.js 24.14.1 and npm 11.11.0.
-`npm run check` passed with all 51 named Node tests, zero failures, plus lint, compilation
-and the production frontend build. The 8 added automation tests cover the shared acceptance
-journey, bytecode/network/budget guards and explorer success/failure/retry behavior.
-
-`npm run test:sepolia:rehearse` also passed: an isolated chain deployed two fresh treasuries,
-executed the complete multi-signer journey, built an isolated production app, and checked
-balances, members, request counts, event history and second-wallet isolation in Chromium.
-The normal local deployment manifests were preserved. The workflow YAML and job gates were
-parsed successfully. Explorer responses were mocked only in the unit tests.
-
-No real Sepolia transactions or Etherscan verification were performed during this delivery.
-The scripts and CI job are ready, but public acceptance remains pending repository setup and
-a funded test account. Only a real `sepolia` job with public evidence status `passed` counts
-as public verification. Setup and exact proof requirements are in SEPOLIA_CI.md.
-
-The final rehearsal also refreshed fees per transaction and exercised bounded temporary-signer
-gas top-ups. The automated run limits remain enforced before each deployer transaction.
+Sepolia contracts are deployed once, manually, with `npm run deploy -- --network sepolia`;
+CI holds no deployer key and sends no transactions. Validation of the public deployment is
+automated and read-only: `npm run verify:deployment -- --network sepolia` runs before every
+GitHub Pages publish and blocks it unless the committed record matches the chain (runtime
+bytecode equals the current build, factory block and wallet provenance match, and, with
+`ETHERSCAN_API_KEY`, source is verified). The Etherscan client is covered by mocked unit tests
+in test/explorer.test.mjs. Results of a real run are visible in the Pages workflow log.

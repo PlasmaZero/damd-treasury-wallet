@@ -1,8 +1,10 @@
-import { BrowserProvider, Contract, Interface, JsonRpcProvider, getAddress } from 'ethers';
+import { BrowserProvider, Contract, Interface, JsonRpcProvider, getAddress, toQuantity } from 'ethers';
 import treasuryAbi from '../contract/abi/Treasury.json' with {type:'json'};
 import factoryAbi from '../contract/abi/TreasuryFactory.json' with {type:'json'};
 import {ACTION_TYPES,STATUS,decodeParams,describeAction,encodeParams,validateConfig} from '../contract/params.js';
 import {toTxError} from '../contract/errors.js';
+
+const CHAINS={1337:{chainName:'DAMD Local'},11155111:{chainName:'Sepolia',blockExplorerUrls:['https://sepolia.etherscan.io']}};
 
 export function createWalletService(config) {
   const ethereum=config.ethereum??globalThis.window?.ethereum;
@@ -18,12 +20,25 @@ export function createWalletService(config) {
   const factory=()=>{if(!config.factory) throw Error('Deploy the factory first with npm run deploy.');return new Contract(config.factory,factoryInterface,provider);};
   const notify=()=>listeners.forEach(cb=>cb());
   const changed=accounts=>{session++;account=Array.isArray(accounts)&&accounts[0]?getAddress(accounts[0]):null;notify();};
-  const chainChanged=()=>{session++;account=null;notify();};
+  // Keep the account when MetaMask lands on the configured chain (e.g. after switchChain).
+  const chainChanged=id=>{session++;if(Number(id)!==config.chainId)account=null;notify();};
   ethereum?.on?.('accountsChanged',changed); ethereum?.on?.('chainChanged',chainChanged); ethereum?.on?.('disconnect',chainChanged);
   async function assertNetwork() {
     const network=await provider.getNetwork();
     if(Number(network.chainId)!==config.chainId) throw Object.assign(new Error('RPC network does not match the selected network.'),{code:'WRONG_NETWORK'});
     if(ethereum&&Number(await ethereum.request({method:'eth_chainId'}))!==config.chainId) throw toTxError({code:'WRONG_NETWORK'});
+  }
+  async function switchChain() {
+    if(Number(await ethereum.request({method:'eth_chainId'}))===config.chainId) return;
+    const chainId=toQuantity(config.chainId);
+    try {await ethereum.request({method:'wallet_switchEthereumChain',params:[{chainId}]});}
+    catch(e) {
+      if(e.code===4001) throw e;
+      // 4902: MetaMask does not know this chain yet. Other failures fall through to assertNetwork.
+      if(e.code!==4902&&e.data?.originalError?.code!==4902) return;
+      const extra=CHAINS[config.chainId]??{chainName:`Chain ${config.chainId}`};
+      await ethereum.request({method:'wallet_addEthereumChain',params:[{chainId,nativeCurrency:{name:'Ether',symbol:'ETH',decimals:18},rpcUrls:[config.rpcUrl],...extra}]});
+    }
   }
   async function signer() {
     if(!ethereum) throw Error('Install MetaMask to sign transactions.');
@@ -127,7 +142,7 @@ export function createWalletService(config) {
   const api={
     async connect() {
       if(!ethereum) throw Error('Install MetaMask to connect a wallet.');
-      try {const a=await ethereum.request({method:'eth_requestAccounts'});await assertNetwork();account=getAddress(a[0]);session++;notify();return account;}catch(e){throw toTxError(e,iface);}
+      try {const a=await ethereum.request({method:'eth_requestAccounts'});await switchChain();await assertNetwork();account=getAddress(a[0]);session++;notify();return account;}catch(e){throw toTxError(e,iface);}
     },getAccount:()=>account,
     onAccountOrChainChange(cb) {listeners.add(cb);return ()=>listeners.delete(cb);},
     async listWallets(a) {

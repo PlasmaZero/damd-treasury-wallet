@@ -54,9 +54,8 @@ of those later milestones. Do not present inherited validation notes as new resu
 
 ## Public deployment feedback followup
 
-The automation requested in the earlier feedback is now implemented in the CI `sepolia`
-job, with real public transaction assertions, build-bytecode comparison, Etherscan source
-verification, public frontend checks and downloadable evidence. The shared journey and UI
-have passed a local rehearsal. This is implemented automation, not a completed public run:
-repository credentials, a funded account and the first successful Sepolia execution are
-still required. See SEPOLIA_CI.md. The earlier milestone split does not waive this feedback.
+Public deployment verification is automated in the GitHub Pages workflow: before each
+publish, `verify:deployment` compares the deployed runtime bytecode with the current build,
+checks the deployment record and wallet provenance, and (with `ETHERSCAN_API_KEY`) confirms
+Etherscan source verification. Deployment itself stays a manual, one-time command; see the
+README's Public deployment section and docs/DECISIONS.md for why CI does not deploy.

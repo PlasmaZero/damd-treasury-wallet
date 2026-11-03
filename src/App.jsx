@@ -6,7 +6,8 @@ import {configurationWarnings,canReachRecoveryVeto} from './contract/safety.js';
 
 const MOCK=import.meta.env.VITE_USE_MOCK==='true';
 const CHAIN=Number(import.meta.env.VITE_CHAIN_ID??1337);
-const RPC=import.meta.env.VITE_RPC_URL??(CHAIN===1337?'http://127.0.0.1:8545':'');
+// Public fallback so a hosted Sepolia build works without a private RPC key.
+const RPC=import.meta.env.VITE_RPC_URL||(CHAIN===1337?'http://127.0.0.1:8545':CHAIN===11155111?'https://ethereum-sepolia-rpc.publicnode.com':'');
 const EXPLORER=CHAIN===11155111?'https://sepolia.etherscan.io':null;
 const DELAYS={smallTierDelay:15,largeTierDelay:60,governanceDelay:120,recoveryDelay:180,proposalTTL:86400,recoveryTTL:86400};
 const human=s=>s.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/^./,c=>c.toUpperCase());
@@ -33,9 +34,11 @@ export default function App() {
   useEffect(()=>{let live=true;
     (async()=>{
       try {
-        const response=MOCK?{ok:true,json:async()=>({chainId:1337,factory:MOCK_WALLET,demoWallet:MOCK_WALLET})}:await fetch(`/deployments/${CHAIN}.json`,{cache:'no-store'});
-        if(!response.ok) throw Error('Deployment file is missing. Start the chain and run npm run deploy.');
-        const d=await response.json();if(!d.factory) throw Error('Factory has not been deployed. Run npm run deploy.');
+        const response=MOCK?{ok:true,json:async()=>({chainId:1337,factory:MOCK_WALLET,demoWallet:MOCK_WALLET})}:await fetch(`${import.meta.env.BASE_URL}deployments/${CHAIN}.json`,{cache:'no-store'});
+        // Static hosts may answer a missing file with index.html, so treat unparsable JSON as missing too.
+        const d=response.ok?await response.json().catch(()=>null):null;
+        if(!d) throw Error(CHAIN===1337?'Deployment file is missing. Start the chain and run npm run deploy.':`No deployment record for chain ${CHAIN}. Run npm run deploy -- --network sepolia and commit deployments/${CHAIN}.json.`);
+        if(!d.factory) throw Error('Factory has not been deployed. Run npm run deploy.');
         if(!RPC) throw Error('Set VITE_RPC_URL in .env for this network.');
         const s=createWalletService({...d,rpcUrl:RPC});if(d.demoWallet)s.addKnownWallet(d.demoWallet);
         if(live){setService(s);setWallet(d.demoWallet??'');setWallets(d.demoWallet?[d.demoWallet]:[]);setSetupError('');}
@@ -87,7 +90,7 @@ export default function App() {
     <main>
       <header className="topbar"><span>TEAM DAMD <span className="slash">/</span> Treasury workspace</span><div className="account-area"><span className="role">{role}</span>{account&&<span title={account}>{short(account)}</span>}<button className="primary" onClick={connect} disabled={!service||busy}>{account?'Reconnect wallet':'Connect MetaMask'}</button></div></header>
       <div className="content"><div className="page-heading"><div className="eyebrow">CONTROL TOGETHER</div><h1>{tab}</h1><p>{({Overview:'A clear view of your funds and the rules that protect them.',Proposals:'Review shared decisions. Approve, wait, then execute.',Governance:'Change wallet rules through the same approval process.',Recovery:'Replace a lost owner address with guardian approval.',Activity:'An on-chain record of your treasury’s actions.','Create wallet':'Set the members and rules for a new shared treasury.'})[tab]}</p></div>
-      {setupError&&<Notice type="error"><strong>Setup required</strong><p>{setupError}</p><code>npm run chain</code><p>In another terminal: <code>npm run deploy</code></p><button onClick={()=>setRetry(x=>x+1)}>Retry setup</button></Notice>}
+      {setupError&&<Notice type="error"><strong>Setup required</strong><p>{setupError}</p>{CHAIN===1337&&<><code>npm run chain</code><p>In another terminal: <code>npm run deploy</code></p></>}<button onClick={()=>setRetry(x=>x+1)}>Retry setup</button></Notice>}
       {service?.mock&&<Notice><strong>SIMULATED DATA — no blockchain transactions</strong><div className="button-row"><select aria-label="Mock account" value={account??''} onChange={e=>service.mock.setAccount(e.target.value)}><option value="" disabled>Select a demo role</option>{MOCK_ACCOUNTS.map(a=><option key={a.address} value={a.address}>{a.name}</option>)}</select><button onClick={()=>service.mock.advanceTime(60)}>Advance 60 seconds</button></div></Notice>}{service&&<div className="wallet-bar"><Field label="Treasury wallet"><select value={wallet} onChange={e=>{setWallet(e.target.value);setPage(0);setRecoveryPage(0);}}><option value="">Select a wallet</option>{wallets.map(w=><option key={w} value={w}>{short(w)}{same(w,wallet)?' · selected':''}</option>)}</select></Field><form className="inline-form" onSubmit={e=>{e.preventDefault();try{service.addKnownWallet(manual);setWallet(manual);setManual('');setPage(0);setRecoveryPage(0);}catch{setError('Enter a valid Ethereum wallet contract address.');}}}><Field label="Add wallet by address"><input aria-label="Wallet contract address" value={manual} placeholder="0x…" onChange={e=>setManual(e.target.value)} required/></Field><button type="submit">Add</button></form><button onClick={refresh} disabled={loading||!wallet}>{loading?'Syncing…':'Refresh'}</button></div>}
       {wallet&&<div className="wallet-address"><Address value={wallet}/>{snap&&<span>Block {snap.blockNumber.toLocaleString()} · {date(snap.chainTime)}</span>}</div>}
       {error&&<Notice type="error">{error}</Notice>}

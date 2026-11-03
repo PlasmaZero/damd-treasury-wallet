@@ -22,6 +22,5 @@ FULL TEST PLAN: docs/TEST_PLAN.md
 Redeploy locally for this version; do not reuse M3 contracts.
 Public deployment and comprehensive integration reporting are Milestone 5 work.
 
-AUTOMATED SEPOLIA CI SETUP: docs/SEPOLIA_CI.md
-Public deployment/function/source checks are implemented but require GitHub secrets and
-a funded Sepolia account. A passing local rehearsal is not a completed public run.
+SEPOLIA + GITHUB PAGES: README.md, section "Public deployment".
+Deploy once with npm run deploy -- --network sepolia; the Pages workflow verifies and publishes.

@@ -118,12 +118,10 @@ engineering. One-confirmation UX, exhaustive fuzzing, production finality, publi
 external auditing, and final reports are not delivered by this M4 checkpoint.
 
 
-## Automated public testnet acceptance followup
+## Public testnet verification
 
-The earlier public-deployment feedback now has an implemented CI path. `verify` includes
-an isolated deployment/frontend rehearsal. The dependent `sepolia` job, gated to trusted
-main push/manual events, performs actual public deployment, multi-signer functional checks,
-source verification and production UI reads. Setup and exact completion criteria are in
-SEPOLIA_CI.md. The tests in test/testnet.test.mjs and test/explorer.test.mjs cover the shared
-journey and explorer outcomes locally; public success remains pending credentials and a real
-run. The automation never uses a local time shortcut on the public path.
+Deployment is a manual, one-time command. Verification is automated and read-only: the
+GitHub Pages workflow runs `verify:deployment -- --network sepolia` before publishing
+(bytecode against the current build, record consistency, wallet provenance, and Etherscan
+source when `ETHERSCAN_API_KEY` is set). test/explorer.test.mjs covers the Etherscan client
+with mocked responses. Signing flows on Sepolia are checked manually with MetaMask (docs/DEMO.md).

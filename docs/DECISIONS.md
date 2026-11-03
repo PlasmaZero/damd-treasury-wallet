@@ -61,11 +61,13 @@ is allowed by the frozen spec, so its owner controls actions alone. Use demo fun
 - Dependency versions are pinned; source verification uses the emitted standard JSON input.
 
 
-## Automated public testnet verification followup
+## Public testnet deployment: manual deploy, automated verification
 
-CI now includes a trusted-main Sepolia job after local verification. It creates disposable
-multi-signer proof wallets, compares deployed runtime with the compiled build, performs
-transaction assertions, verifies source on Etherscan and checks production frontend reads.
-The earlier statement that verification is manual applies only to the separate manual deploy
-alternative. Automation is implemented; actual public execution still requires setup and a
-funded account. See SEPOLIA_CI.md for evidence requirements and remaining acceptance scope.
+Contracts are deployed manually from a team member's machine; CI never deploys. A CI deploy
+job would need a funded private key as a repository secret and would replace the team's
+treasury record with disposable fixtures on each run, while the contracts are immutable and
+only need deploying when the Solidity changes. Verification is automated instead: the GitHub
+Pages workflow runs the read-only `verify:deployment` check before publishing, so the hosted
+site is never built against a record that does not match the chain. Each step has one owner:
+`deploy.mjs` deploys, `verify-etherscan.mjs` (via `scripts/lib/explorer.mjs`) publishes source,
+`verify-deployment.mjs` checks, and `pages.yml` builds and publishes the frontend.
