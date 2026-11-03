@@ -39,7 +39,7 @@ Custom-error assertions decode ABI revert data and event assertions check orderi
 - Seeded fast-check payment sequences: cap, quorum, timelock, cancellation, at-most-once,
   aggregate spending, and ETH outflow accounting. Seed 416; six generated runs.
 
-## Service suite: 8 named tests
+## Service suite: 10 named tests
 
 - Real service wallet creation, deposit, preview, approval, execution, history,
   account change, wrong network and signature rejection.
@@ -84,7 +84,21 @@ The full planned coverage and manual acceptance scenarios are in docs/TEST_PLAN.
 
 Five explorer-client cases cover exact compiler/constructor submission, pending verification,
 already-verified source/compiler checks, bounded timeout, rejected bytecode/credentials redaction,
-and indexing-delay retry (grouped into five named tests). Mocked explorer responses do not
+and indexing-delay retry (eight named tests). Mocked explorer responses do not
 count as a real Sepolia check; that is `npm run verify:deployment -- --network sepolia`, which
 the GitHub Pages workflow runs before publishing. The browser test also runs it against its
 fresh local deployment.
+
+
+## Final Milestone 4 demo test inventory
+
+This package contains 66 named Node tests: 34 original contract tests, 9 adversarial contract scenarios, 10 service/mock tests, 5 warning/preview tests, and 8 explorer-client tests. The earlier total of 43 describes the feature checkpoint before the explorer-client tests were added. Compared with the original M3 ZIP supplied for this project (29 contract and 5 service tests), the increase is 32 named tests.
+
+The Playwright browser walkthrough runs separately with npm run test:browser. It covers multiple scenarios and desktop/mobile layouts; it is not included in the count of 66. Explorer-client tests use mocked API responses. Local browser tests use a local chain and a wallet adapter, rather than the actual MetaMask extension.
+
+This demo ZIP preserves the team's manual Sepolia deployment and Pages verification. It excludes PR #9 and the separate disposable public-testnet acceptance workflow. These counts identify implemented tests, rather than asserting a new execution of this ZIP's full suite.
+
+
+## Expanded M4 security scenarios
+
+See [SECURITY_SCENARIOS_M4.md](../docs/SECURITY_SCENARIOS_M4.md) for nine new adversarial contract scenarios, two service regressions and four added warning/preview tests. The current total is 66 named tests, plus a separate expanded browser walkthrough. The browser now checks prospective membership-removal warnings and the single-guardian warning.

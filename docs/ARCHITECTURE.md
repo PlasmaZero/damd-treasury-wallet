@@ -224,3 +224,7 @@ can veto guardian recovery, so a remaining owner quorum must replace that addres
 governance. There is no bypass if both quorums become inaccessible. The interface cannot
 detect whether a private key is actually lost; it explains the limits without claiming
 an unavailable-key detector or adding a privileged administrator.
+
+## Governance warning previews
+
+Configuration warnings evaluate the proposed member lists for AddOwner, RemoveOwner, ReplaceOwner, AddGuardian and RemoveGuardian, as well as threshold changes. A removal that makes M=N or K=G therefore warns before signing. K=1 warns that a single guardian can authorize recovery while retaining delay, replacement-confirmation and cancellation requirements. These are UI previews; contract validation remains authoritative.

@@ -45,3 +45,18 @@ GitHub Pages publish and blocks it unless the committed record matches the chain
 bytecode equals the current build, factory block and wallet provenance match, and, with
 `ETHERSCAN_API_KEY`, source is verified). The Etherscan client is covered by mocked unit tests
 in test/explorer.test.mjs. Results of a real run are visible in the Pages workflow log.
+
+
+## Final Milestone 4 demo test inventory
+
+This package contains 66 named Node tests: 34 original contract tests, 9 adversarial contract scenarios, 10 service/mock tests, 5 warning/preview tests, and 8 explorer-client tests. The earlier total of 43 describes the feature checkpoint before the explorer-client tests were added. Compared with the original M3 ZIP supplied for this project (29 contract and 5 service tests), the increase is 32 named tests.
+
+The Playwright browser walkthrough runs separately with npm run test:browser. It covers multiple scenarios and desktop/mobile layouts; it is not included in the count of 66. Explorer-client tests use mocked API responses. Local browser tests use a local chain and a wallet adapter, rather than the actual MetaMask extension.
+
+This demo ZIP preserves the team's manual Sepolia deployment and Pages verification. It excludes PR #9 and the separate disposable public-testnet acceptance workflow. These counts identify implemented tests, rather than asserting a new execution of this ZIP's full suite.
+
+## Expanded security validation - November 3, 2026
+
+All 66 named Node tests passed in two non-overlapping groups: 24 security/warning/service tests and 42 existing treasury/explorer tests. Zero failures or skips were reported. Lint, Solidity compilation, and the production frontend build passed. The full Playwright browser walkthrough passed, including the newly added single-guardian, proposed guardian-removal and proposed owner-removal warnings, existing security flows, desktop and mobile layout checks.
+
+Contracts, ABI JSON and all committed deployment records were compared byte-for-byte against the previous M4 demo ZIP and are unchanged. No public Sepolia transaction was sent for these tests. No hosted CI success, source-verification success, coverage percentage, actual MetaMask extension acceptance or independent security audit is claimed. PR #9 is excluded.

@@ -13,6 +13,12 @@ const server = ganache.server({ wallet: { deterministic: true, totalAccounts: 12
 let vite, browser, page; const errors = [];
 const paths = ['deployments/1337.json', 'public/deployments/1337.json']; const originals = paths.map(p => fs.existsSync(p) ? fs.readFileSync(p) : null);
 function run(file, args) { return new Promise((resolve, reject) => { const p = spawn(file, args, { stdio: 'inherit', env: process.env }); p.on('error', reject); p.on('exit', code => code === 0 ? resolve() : reject(Error(`${file} exited ${code}`))); }); }
+async function mineAndRefresh(seconds) {
+  await server.provider.request({method:'evm_increaseTime',params:[seconds]});
+  await server.provider.request({method:'evm_mine',params:[]});
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.getByText('Syncing…',{exact:true}).waitFor({state:'hidden',timeout:45000});
+}
 try {
   await server.listen(8545, '127.0.0.1'); await run(process.execPath, ['scripts/deploy.mjs']); await run(process.execPath, ['scripts/verify-deployment.mjs']);
   const accounts = Object.keys(server.provider.getInitialAccounts());
@@ -39,18 +45,18 @@ try {
   const proposal = page.locator('article').filter({ hasText: 'PROPOSAL #0' });
   for (const index of [1, 2]) { await page.evaluate(i => window.__setTestAccount(i), index); await proposal.getByRole('button', { name: 'Approve', exact: true }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); }
   await proposal.getByText('3/3 approvals', { exact: true }).waitFor();
-  await server.provider.request({ method: 'evm_increaseTime', params: [16] }); await server.provider.request({ method: 'evm_mine', params: [] }); await proposal.getByRole('button', { name: 'Execute', exact: true }).click({ timeout: 25000 }); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await proposal.locator('.badge').filter({ hasText: 'Executed' }).waitFor({ timeout: 25000 }); console.log('PASS: browser deposit and payment.');
+  await mineAndRefresh(16); await proposal.getByRole('button', { name: 'Execute', exact: true }).click({ timeout: 25000 }); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await proposal.locator('.badge').filter({ hasText: 'Executed' }).waitFor({ timeout: 25000 }); console.log('PASS: browser deposit and payment.');
   // Governance through the browser.
   await page.evaluate(() => window.__setTestAccount(0)); await page.getByRole('button', { name: 'Governance', exact: false }).first().click(); await page.getByLabel('Action', { exact: true }).selectOption('AddOwner'); await page.getByLabel('Owner', { exact: true }).fill(accounts[10]); await page.getByRole('button', { name: 'Review governance proposal' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 });
   await page.getByRole('button', { name: 'Proposals', exact: false }).first().click(); const g = page.locator('article').filter({ hasText: 'PROPOSAL #1' });
   for (const i of [1, 2]) { await page.evaluate(i => window.__setTestAccount(i), i); await g.getByRole('button', { name: 'Approve', exact: true }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); }
   await g.getByText('3/3 approvals', { exact: true }).waitFor();
-  await server.provider.request({ method: 'evm_increaseTime', params: [121] }); await server.provider.request({ method: 'evm_mine', params: [] }); await g.getByRole('button', { name: 'Execute', exact: true }).click({ timeout: 25000 }); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await g.locator('.badge').filter({ hasText: 'Executed' }).waitFor({ timeout: 25000 }); console.log('PASS: browser governance.');
+  await mineAndRefresh(121); await g.getByRole('button', { name: 'Execute', exact: true }).click({ timeout: 25000 }); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await g.locator('.badge').filter({ hasText: 'Executed' }).waitFor({ timeout: 25000 }); console.log('PASS: browser governance.');
   // Recovery: guardian 5 initiates, guardian 6 approves, account 8 confirms and executes.
   await page.evaluate(() => window.__setTestAccount(5)); await page.getByRole('button', { name: 'Recovery', exact: false }).first().click(); await page.getByLabel('Lost owner address').selectOption({ label: getAddress(accounts[4]) });
   await page.getByLabel('New owner address', { exact: true }).fill(accounts[8]); await page.getByRole('button', { name: 'Review recovery request' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); const r = page.locator('article').filter({ hasText: 'Recovery #0' }); await r.waitFor({ timeout: 25000 });
   await page.evaluate(() => window.__setTestAccount(6)); await r.getByRole('button', { name: 'Approve', exact: true }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 });
-  await page.evaluate(() => window.__setTestAccount(8)); await r.getByRole('button', { name: 'Confirm new account' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); await r.getByText('New owner confirmed', { exact: true }).waitFor(); await r.getByText('2/2 guardian approvals', { exact: true }).waitFor(); await server.provider.request({ method: 'evm_increaseTime', params: [181] }); await server.provider.request({ method: 'evm_mine', params: [] }); await r.getByRole('button', { name: 'Execute recovery' }).click({ timeout: 25000 }); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await r.locator('.badge').filter({ hasText: 'Executed' }).waitFor({ timeout: 25000 });
+  await page.evaluate(() => window.__setTestAccount(8)); await r.getByRole('button', { name: 'Confirm new account' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); await r.getByText('New owner confirmed', { exact: true }).waitFor(); await r.getByText('2/2 guardian approvals', { exact: true }).waitFor(); await mineAndRefresh(181); await r.getByRole('button', { name: 'Execute recovery' }).click({ timeout: 25000 }); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await r.locator('.badge').filter({ hasText: 'Executed' }).waitFor({ timeout: 25000 });
   await page.getByRole('button', { name: 'Activity', exact: false }).first().click(); await page.getByText('Recovery Executed', { exact: true }).waitFor({ timeout: 20000 });
   await page.getByRole('button', { name: 'Overview', exact: false }).first().click(); await page.getByRole('heading', { name: 'Add test funds' }).waitFor();
   // M4 regression checks: independent treasuries and cancellation/failure UI.
@@ -59,7 +65,14 @@ try {
   const confirm=async()=>{await page.getByRole('button',{name:'Confirm in MetaMask',exact:true}).click();await page.getByText('Transaction confirmed.',{exact:true}).waitFor({timeout:25000});};
   const advance=async seconds=>{await server.provider.request({method:'evm_increaseTime',params:[seconds]});await server.provider.request({method:'evm_mine',params:[]});await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.getByText('Syncing…',{exact:true}).waitFor({state:'hidden'});};
   const originalWallet=await page.getByLabel('Treasury wallet',{exact:true}).inputValue();
-  await account(0);await nav('Create wallet');
+  await account(0);await nav('Governance');
+  await page.getByLabel('Action',{exact:true}).selectOption('SetGuardianThreshold');
+  await page.getByLabel('Guardian Threshold',{exact:true}).fill('1');
+  await page.getByText('One guardian can authorize a recovery request.',{exact:false}).waitFor();
+  await page.getByLabel('Action',{exact:true}).selectOption('RemoveGuardian');
+  await page.getByLabel('Guardian',{exact:true}).fill(accounts[7]);
+  await page.getByText('Recovery requires every guardian.',{exact:false}).waitFor();
+  await nav('Create wallet');
   await page.getByLabel('Owners',{exact:true}).fill(accounts.slice(0,3).join(', '));
   await page.getByLabel('Guardians',{exact:true}).fill(accounts.slice(5,7).join(', '));
   await page.getByLabel('Owner threshold',{exact:true}).fill('1');
@@ -68,6 +81,10 @@ try {
   await page.getByRole('button',{name:'Review wallet creation',exact:true}).click();await confirm();
   await page.getByRole('heading',{name:'Add test funds'}).waitFor();
   const secondWallet=await page.getByLabel('Treasury wallet',{exact:true}).inputValue();assert.notEqual(secondWallet,originalWallet);console.log('PASS: browser independent wallet creation and threshold warning.');
+  await nav('Governance');await page.getByLabel('Action',{exact:true}).selectOption('RemoveOwner');
+  await page.getByLabel('Owner',{exact:true}).fill(accounts[2]);
+  await page.getByText('Other owners cannot reach the recovery cancellation threshold',{exact:false}).waitFor();
+  await nav('Overview');
   assert.match(await page.locator('.stat.hero').innerText(),/0\.0 ETH/);
   await page.getByLabel('Deposit amount (ETH)').fill('0.2');
   await page.getByRole('button',{name:'Review deposit',exact:true}).click();
@@ -77,7 +94,7 @@ try {
   await page.getByRole('button',{name:'Review deposit',exact:true}).click();await confirm();
   await page.getByLabel('Treasury wallet',{exact:true}).selectOption(originalWallet);
   await page.getByText('Syncing…',{exact:true}).waitFor({state:'hidden'});
-  assert.match(await page.locator('.stat.hero').innerText(),/0\.9 ETH/);
+  await page.locator('.stat.hero').filter({hasText:/0\.9 ETH/}).waitFor({timeout:45000});
   await page.getByLabel('Treasury wallet',{exact:true}).selectOption(secondWallet);
   await nav('Proposals');await page.getByText('No proposals match this page.',{exact:true}).waitFor();
   const propose=async()=>{await page.getByLabel('Recipient address',{exact:true}).fill(accounts[9]);await page.getByLabel('Amount (ETH)',{exact:true}).fill('0.1');await page.getByRole('button',{name:'Review payment proposal',exact:true}).click();await confirm();};

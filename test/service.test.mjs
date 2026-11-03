@@ -78,3 +78,31 @@ test('mock marks a replaced recovery target invalid and still permits direct can
  const view=await api.getRecovery(MOCK_WALLET,1);assert.equal(view.status,'Invalidated');assert.match(view.blockedReason,/removed or replaced/);
  api.mock.setAccount(target);await api.cancelRecovery(MOCK_WALLET,1);assert.equal((await api.getRecovery(MOCK_WALLET,1)).status,'Cancelled');
 });
+
+test('service warns about a replacement membership conflict and clears it when governance resolves it',async()=>{
+ const f=await setup();try{
+  const eth=walletAdapter(f),api=createWalletService({provider:f.provider,ethereum:eth,chainId:1337,storage:{getItem:()=>null,setItem:()=>{}}}),w=f.wallet.target;
+  await api.connect();eth.setAccount(3);const r=await api.initiateRecovery(w,f.accounts[2],f.accounts[8]);
+  eth.setAccount(4);await api.approveRecovery(w,r.id);eth.setAccount(8);await api.confirmRecovery(w,r.id);
+  const govern=async(action)=>{eth.setAccount(0);const p=await api.proposeAction(w,action,{guardian:f.accounts[8]});eth.setAccount(1);await api.approve(w,p.id);await f.advance(60);await api.execute(w,p.id);};
+  await govern('AddGuardian');const blocked=await api.getRecovery(w,r.id);
+  assert.equal(blocked.status,'Ready');assert.match(blocked.blockedReason,/already a member/);
+  eth.setAccount(3);const preview=await api.preview(w,'executeRecovery',[r.id]);assert.equal(preview.ok,false);assert.equal(preview.error.code,'DuplicateAddress');
+  await govern('RemoveGuardian');const restored=await api.getRecovery(w,r.id);
+  assert.equal(restored.status,'Ready');assert.equal(restored.blockedReason,null);assert.equal(restored.readyAt,blocked.readyAt);
+ }finally{f.provider.destroy();await f.rpc.disconnect();}
+});
+
+test('fresh service rereads missed external changes without receiving transaction events',async()=>{
+ const f=await setup();try{
+  const address=f.wallet.target,eth=walletAdapter(f);
+  const make=()=>createWalletService({provider:f.provider,ethereum:eth,chainId:1337,storage:{getItem:()=>null,setItem:()=>{}}});
+  const first=make();await first.connect();const before=await first.snapshot(address);
+  // No subscribe() listener exists while a separate signer changes the chain.
+  await sent(f.signers[9].sendTransaction({to:address,value:E('0.3')}));
+  await sent(f.wallet.connect(f.signers[1]).proposePayment(f.accounts[9],E('0.1')));
+  const reconnected=make();eth.setAccount(2);await reconnected.connect();const after=await reconnected.snapshot(address);
+  assert.equal(after.balance,before.balance+E('0.3'));assert.equal(after.proposalCount,1);
+  assert.equal(after.me.account,f.accounts[2]);assert.equal((await reconnected.listProposals(address))[0].approvals.by[0],f.accounts[1]);
+ }finally{f.provider.destroy();await f.rpc.disconnect();}
+});

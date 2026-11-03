@@ -27,7 +27,7 @@ view, so existing immutable M3 contracts cannot serve the updated frontend.
 - Cancel recovery directly as the targeted owner or through M other owner votes.
 - View proposals, per-member votes, recovery requests, and event history.
 - Preview transactions before signing; display submission hashes, confirmations, and errors.
-- Refresh from contract state on blocks, events, account/network changes, tab focus, and a five-second fallback timer.
+- Refresh from contract state on blocks, events, account/network changes, tab focus, and a 30-second fallback timer.
 - Run a clearly labeled mock mode without MetaMask or a blockchain.
 
 There is no custom backend, database, proxy upgrade key, or privileged team administrator.
@@ -320,3 +320,7 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 Pinned versions are in `package.json` and `package-lock.json`. The implementation choices
 and differences from the input documents are recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
 
+
+## M4 security scenarios and warnings
+
+This demo package contains 66 named Node tests plus the Playwright browser walkthrough. Added scenarios cover guardian collusion, compromised-target veto, quorum loss and repair, competing governance, replacement conflicts and competing payments. Governance warnings now preview membership removals, and K=1 has an explicit warning. See [security scenarios and warning demo steps](docs/SECURITY_SCENARIOS_M4.md). The Solidity contracts and deployed addresses are unchanged; the optional public-testnet workflow in PR #9 is excluded.

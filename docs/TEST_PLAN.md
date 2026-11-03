@@ -28,7 +28,7 @@ results report, a public deployment, an external security audit, or final accept
 
 The CI workflow is `.github/workflows/ci.yml`, workflow `CI`, job `verify`. It installs
 pinned packages, runs lint, tests, build, ABI consistency, and browser checks. Repository
-branch protection and a green hosted run must be independently confirmed in Milestone 5.
+branch protection and a green hosted run must be independently confirmed to close the instructor's priority feedback before Milestone 4.
 
 ## Feature and risk coverage
 
@@ -50,7 +50,7 @@ branch protection and a green hosted run must be independently confirmed in Mile
 | M4-14 | New governance/recovery members discover factory wallets in a fresh session; removed members are filtered; manual addresses remain usable | Real service test, without shared browser storage |
 | M4-15 | M=1, M=N and K=G warnings describe unilateral control, unavailable other-owner veto and missing guardian redundancy | Configuration-warning unit test; browser M=1 warning; manual settings review |
 | M4-16 | Rejected signatures display a recoverable error without changing funds; account/network changes invalidate transaction reviews | Service tests; browser rejected deposit; manual MetaMask checklist |
-| M4-17 | Events, new blocks, tab focus and five-second fallback refresh authoritative state, including changes while disconnected | Implemented subscription paths; manual reconnect/outage scenarios below |
+| M4-17 | Events, new blocks, tab focus and 30-second fallback refresh authoritative state, including changes while disconnected | Implemented subscription paths; manual reconnect/outage scenarios below |
 | M4-18 | Random payment sequences preserve quorum, delay, at-most-once execution and outflow accounting | Seeded fast-check contract test; broader mutation fuzzing planned for M5 |
 
 ## Independent grading checklist: 3 owners, 2 guardians
@@ -125,3 +125,7 @@ GitHub Pages workflow runs `verify:deployment -- --network sepolia` before publi
 (bytecode against the current build, record consistency, wallet provenance, and Etherscan
 source when `ETHERSCAN_API_KEY` is set). test/explorer.test.mjs covers the Etherscan client
 with mocked responses. Signing flows on Sepolia are checked manually with MetaMask (docs/DEMO.md).
+
+## Added M4 adversarial and warning coverage
+
+See SECURITY_SCENARIOS_M4.md for the additional deterministic multi-signer scenarios and warning previews. These add explicit collusion, liveness, membership-race and daily-cap contention cases. They do not establish arbitrary governance/recovery fuzz coverage, actual MetaMask/RPC outage acceptance or a coverage percentage. The instructor feedback lists verified public deployment and enforced CI gates as priorities before M4; retain actual hosted results separately rather than assuming local success closes those items.
