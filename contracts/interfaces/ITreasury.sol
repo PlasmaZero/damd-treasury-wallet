@@ -114,6 +114,8 @@ interface ITreasury {
     function hasVotedCancel(uint256 id, address owner) external view returns (bool);
     function recoveryCount() external view returns (uint256);
     function getRecovery(uint256 id) external view returns (Recovery memory); // status derived
+    // Additive M4 view: false after the target's original membership is removed/replaced.
+    function isRecoveryTargetCurrent(uint256 id) external view returns (bool);
     function liveRecoveryApprovals(uint256 id) external view returns (uint256);
     function hasRecoveryApproval(uint256 id, address guardian) external view returns (bool);
     function recoveryCancelVotes(uint256 id) external view returns (uint256); // live, excl. oldOwner

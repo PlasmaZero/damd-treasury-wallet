@@ -5,7 +5,7 @@ Each contract test starts from an EVM snapshot. Ganache uses a fixed starting ti
 and zero timestamp increment; `mineAt` sets exact boundary timestamps.
 Custom-error assertions decode ABI revert data and event assertions check ordering.
 
-## Contract suite: 29 named tests
+## Contract suite: 34 named tests
 
 - Constructor: zero, duplicate and overlapping roles; invalid thresholds, limits and delays.
 - Constructor events; fresh zero balance; multi-account deposits and event amounts.
@@ -39,7 +39,7 @@ Custom-error assertions decode ABI revert data and event assertions check orderi
 - Seeded fast-check payment sequences: cap, quorum, timelock, cancellation, at-most-once,
   aggregate spending, and ETH outflow accounting. Seed 416; six generated runs.
 
-## Service suite: 5 named tests
+## Service suite: 8 named tests
 
 - Real service wallet creation, deposit, preview, approval, execution, history,
   account change, wrong network and signature rejection.
@@ -61,3 +61,35 @@ This is meaningful regression coverage, not an audit or exhaustive formal proof.
 Random sequences focus on payment invariants; arbitrary governance/recovery state-machine
 fuzzing, all RPC outages, chain reorgs, Slither and Foundry invariant runners remain outside
 this suite. Manual MetaMask steps are listed separately in docs/DEMO.md.
+
+
+## M4 regression additions
+
+- Five contract cases: preserved timer after quorum restoration; removed/readded cancellation
+  votes; removed/readded guardians; changed guardian threshold; stale target generations.
+- Two real-service cases: fresh-session discovery after governance/recovery across independent
+  wallets; invalidated recovery presentation while direct cancellation remains available.
+- Mock regression: stale recovery targets display Invalidated while cancellation remains usable.
+- One configuration-warning unit test (test/safety.test.mjs).
+- Browser additions: a second treasury created in the UI, account/treasury isolation,
+  M=1 warning, signature rejection/retry, disabled early execution, payment cancellation,
+  expiry, direct recovery veto, and multi-owner recovery veto.
+
+Original M4 checkpoint: 43 Node tests (34 contract, 8 service/mock, 1 warning). Counts describe implemented
+checks, not a coverage percentage or a completed Milestone 5 integration campaign.
+The full planned coverage and manual acceptance scenarios are in docs/TEST_PLAN.md.
+
+
+## CI public testnet automation tests
+
+Five explorer-client cases cover exact compiler/constructor submission, pending verification,
+already-verified source/compiler checks, bounded timeout, rejected bytecode/credentials redaction,
+and indexing-delay retry (grouped into five named tests). Three public-journey cases cover
+runtime comparison, wrong-network/budget rejection, and the complete multi-signer transaction
+journey on an isolated local chain. Total named Node tests are now 51: the earlier 43 plus
+these 8 automation regressions. Public runtime checks cannot be inferred from those counts.
+
+`npm run test:sepolia:rehearse` additionally builds an isolated app copy and rehearses the
+production UI checks against the journey's real local contracts. It preserves the main local
+deployment files. Neither that rehearsal nor mocked explorer responses count as an actual
+Sepolia acceptance run. See docs/SEPOLIA_CI.md for the separate public CI job and evidence.

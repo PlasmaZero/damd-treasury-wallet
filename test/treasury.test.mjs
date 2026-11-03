@@ -150,3 +150,51 @@ test('random payment sequences preserve at-most-once, quorum, timelock and daily
    }finally{await f.rpc.request({method:'evm_revert',params:[checkpoint]});}
  }),{numRuns:6,seed:416});
 });
+
+test('queued payment keeps its unlock time when current quorum is lost and restored',async()=>{
+ await gov('SetDelays',{...f.config.delays,proposalTTL:1000});
+ const id=await payment();const queued=await quorum(id);
+ await gov('SetThreshold',{threshold:3});
+ assert.equal((await w.getProposal(id)).readyAt,queued.readyAt);
+ await fail(w.execute.staticCall(id),'BelowThreshold');
+ await sent(w.connect(s[2]).approve(id));
+ assert.equal((await w.getProposal(id)).readyAt,queued.readyAt);
+ await sent(w.execute(id));assert.equal((await w.getProposal(id)).status,2n);
+});
+
+test('removed and readded owner cancellation votes cannot revive',async()=>{
+ await gov('SetDelays',{...f.config.delays,proposalTTL:1000});
+ const id=await payment();await sent(w.connect(s[2]).voteCancel(id));
+ await gov('RemoveOwner',{owner:a[2]});assert.equal(await w.cancelVotes(id),0n);
+ await gov('AddOwner',{owner:a[2]});assert.equal(await w.cancelVotes(id),0n);
+ await sent(w.connect(s[2]).voteCancel(id));assert.equal((await w.getProposal(id)).status,0n);
+ await sent(w.voteCancel(id));assert.equal((await w.getProposal(id)).status,3n);
+});
+
+test('removed and readded guardians need fresh votes and retain the original recovery timer',async()=>{
+ await gov('SetDelays',{...f.config.delays,recoveryTTL:1000});
+ const id=await recovery();const queued=await queueRecovery(id);await sent(w.connect(s[8]).confirmRecovery(id));
+ await gov('RemoveGuardian',{guardian:a[4]});await gov('AddGuardian',{guardian:a[4]});
+ assert.equal(await w.liveRecoveryApprovals(id),1n);await fail(w.connect(s[8]).executeRecovery.staticCall(id),'BelowThreshold');
+ await sent(w.connect(s[4]).approveRecovery(id));assert.equal((await w.getRecovery(id)).readyAt,queued.readyAt);
+ await sent(w.connect(s[8]).executeRecovery(id));assert.equal((await w.getRecovery(id)).status,2n);
+});
+
+test('guardian threshold changes recheck recovery quorum without restarting its timer',async()=>{
+ await gov('SetDelays',{...f.config.delays,recoveryTTL:1000});
+ const id=await recovery();const queued=await queueRecovery(id);await sent(w.connect(s[8]).confirmRecovery(id));
+ await gov('SetGuardianThreshold',{guardianThreshold:3});
+ await fail(w.connect(s[8]).executeRecovery.staticCall(id),'BelowThreshold');
+ await sent(w.connect(s[5]).approveRecovery(id));assert.equal((await w.getRecovery(id)).readyAt,queued.readyAt);
+ await sent(w.connect(s[8]).executeRecovery(id));
+});
+
+test('target validity detects removal and readdition while allowing cancellation of stale recovery',async()=>{
+ await gov('SetDelays',{...f.config.delays,recoveryTTL:1000});
+ const id=await recovery();await queueRecovery(id);await sent(w.connect(s[8]).confirmRecovery(id));
+ assert.equal(await w.isRecoveryTargetCurrent(id),true);
+ await gov('RemoveOwner',{owner:a[2]});await gov('AddOwner',{owner:a[2]});
+ assert.equal(await w.isOwner(a[2]),true);assert.equal(await w.isRecoveryTargetCurrent(id),false);
+ await fail(w.connect(s[8]).executeRecovery.staticCall(id),'NotOwner');
+ await sent(w.connect(s[2]).cancelRecovery(id));assert.equal((await w.getRecovery(id)).status,3n);
+});

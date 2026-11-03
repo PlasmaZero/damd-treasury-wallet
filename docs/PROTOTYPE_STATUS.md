@@ -19,3 +19,7 @@ been deployed to Sepolia as part of this delivery. Sepolia deployment tooling is
 Real MetaMask extension behavior still needs the team's manual walkthrough. Mainnet,
 ERC-20 tokens, proxies, indexers, and production finality handling are out of scope.
 Restarting the local chain resets state and requires deployment again.
+
+M4 adds risk warnings, invalidated-recovery explanations, and current-member factory
+discovery. See MILESTONE4.md and TEST_PLAN.md for scope and the later integration plan.
+Existing immutable contracts must be redeployed locally for the added recovery view.

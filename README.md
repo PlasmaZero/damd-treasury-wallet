@@ -4,6 +4,18 @@ A complete **local test-fund MVP** for the DAMD shared treasury project: React +
 ethers.js + MetaMask, backed by immutable Solidity contracts. This replaces the
 Milestone 2 deposit-only prototype. It is not audited and must not hold real funds.
 
+## Milestone 4 checkpoint
+
+This package completes the local feature implementation and documents the test plan.
+See [M4 changes and scope](docs/MILESTONE4.md) and the [full test plan](docs/TEST_PLAN.md).
+Public-testnet deployment and verification automation is now included; see
+[Sepolia CI setup](docs/SEPOLIA_CI.md). The real public run still requires configured
+credentials and a funded test account. Broader integration acceptance and final release/report
+remain later work. Developer regression checks are not final acceptance.
+
+**Redeploy locally after extracting this version:** M4 adds a read-only recovery-validity
+view, so existing immutable M3 contracts cannot serve the updated frontend.
+
 ## What works
 
 - Create multiple treasury wallets with independent members and rules.
@@ -24,7 +36,7 @@ There is no custom backend, database, proxy upgrade key, or privileged team admi
 ## 1. Install
 
 Use **Node.js 22.12 or later**, npm, and the MetaMask browser extension.
-The project was checked with Node 24.19; CI uses Node 22.
+This M4 checkpoint was checked with Node 24.14.1; CI is configured for Node 22.
 
 ```sh
 npm ci
@@ -107,9 +119,11 @@ Lost key: guardians initiate a recovery to a new address. Stolen key: owners use
 **Governance → Replace Owner**; a thief holding the old key can veto guardian recovery.
 Recovery replaces an address; it never reconstructs a private key.
 
-The replacement account must confirm before recovery executes. An observer/new
-owner can select the demo wallet or manually add its address, even though the
-factory's creation-time membership index does not list that new address.
+The replacement account must confirm before recovery executes. New owners/guardians
+are discovered by scanning the configured factory's creation events and checking current
+membership, including in a fresh browser. Wallets from another factory can be added by address.
+Stale recoveries display Invalidated and explain why execution is blocked; cancellation
+remains available. Threshold warnings explain single-owner control and unavailable veto routes.
 
 ## Mock frontend mode
 
@@ -155,91 +169,44 @@ A workflow file alone does not prove your GitHub run passed; check the Actions t
 
 Restarting the chain removes all wallet state. Old deployments are not persistent.
 
-## Public deployment (Sepolia + GitHub Pages)
+## Automated public Sepolia deployment and acceptance
 
-The hosted demo uses the Sepolia testnet, whose ETH is free and has no value, and serves
-the frontend from GitHub Pages. Graders need only a browser and MetaMask.
+The CI workflow now gates a public Sepolia job on the local `verify` job. It deploys a factory
+and two treasuries, submits multi-signer payment/governance/recovery transactions, compares
+on-chain bytecode with the build, verifies all three contracts on Etherscan, and checks the
+production UI against public state. It saves transaction and deployment evidence as artifacts.
 
-### Deploy the contracts (once, from one team member's machine)
+**Setup is required and no real public run has been performed in this package.** Follow
+[docs/SEPOLIA_CI.md](docs/SEPOLIA_CI.md) for the three GitHub environment secrets, public RPC
+variable, optional automatic-main trigger, and the exact criteria for a passing public run.
 
-1. Create a new MetaMask account used **only** for deploying. Get Sepolia ETH for it
-   from a faucet (for example the Google Cloud Web3 faucet or the Sepolia PoW faucet).
-   Deployment costs well under 0.1 SepoliaETH.
-2. Get a Sepolia RPC URL (Alchemy or Infura free tier, or
-   `https://ethereum-sepolia-rpc.publicnode.com`).
-3. Copy `.env.example` to `.env`. Set `SEPOLIA_RPC_URL` and `DEPLOYER_KEY` (the test-only
-   deployer's private key). `.env` is git-ignored; never commit it.
-4. Optional demo wallet: copy `config/demo-wallet.json` to `config/sepolia-wallet.json`
-   and add `owners` and `guardians` arrays with the team's Sepolia addresses (disjoint,
-   meeting the thresholds). Amounts are **wei strings**. Without this file, only the
-   factory is deployed and wallets are created in the UI.
-5. Run:
+`npm run test:sepolia:rehearse` checks the same transaction journey and production UI on an
+isolated local chain; it does not count as public-testnet evidence.
+
+## Manual Sepolia deployment alternative
+
+1. Copy `.env.example` to `.env`.
+2. Set `SEPOLIA_RPC_URL` and `DEPLOYER_KEY` for a funded **test-only** deployer.
+3. Copy `config/demo-wallet.json` to `config/sepolia-wallet.json` and add real testnet
+   `owners` and `guardians` arrays. All amounts in that JSON are **wei strings**.
+4. Run:
 
    ```sh
    npm run deploy -- --network sepolia
    ```
 
-6. Check the deployment (read-only, sends no transactions):
+5. Set `VITE_USE_MOCK=false`, `VITE_CHAIN_ID=11155111`, and `VITE_RPC_URL` to a Sepolia
+   browser-compatible RPC. Restart Vite or rebuild the frontend.
+6. Import/use your own funded Sepolia test accounts in MetaMask. Never use the local
+   development keys here. Build with `npm run build` and serve `dist/` for static hosting.
 
-   ```sh
-   npm run verify:deployment -- --network sepolia
-   ```
-
-7. Commit `deployments/11155111.json` and `public/deployments/11155111.json`. Contracts
-   are immutable: redeploy only if the Solidity changes, then commit the new record.
-
-### Deployment verification
-
-`npm run verify:deployment` (local chain) or `npm run verify:deployment -- --network sepolia`
-compiles the current source and checks the committed record against the chain. It exits
-non-zero if any check fails:
-
-- the record has only the expected fields, both copies match, and the RPC is on the right chain;
-- the factory and demo wallet run exactly the compiled `TreasuryFactory` and `Treasury`
-  (immutable values masked; a metadata-only difference means the source text changed);
-- `factoryDeployedAtBlock` equals the factory's own `deployedAtBlock()`, so the app scans
-  for wallets from the right block;
-- the recorded factory emitted `WalletCreated` for the demo wallet and lists it in
-  `walletsOf` for every owner and guardian;
-- the demo wallet's config matches `config/sepolia-wallet.json` (a warning only, since
-  governance can change it);
-- with `ETHERSCAN_API_KEY` set, both contracts have verified source on Etherscan.
-
-It uses `SEPOLIA_RPC_URL` if set, otherwise the public publicnode endpoint. The browser test
-runs it after its local deploy, and the GitHub Pages workflow runs it before publishing, so
-the site is never built against a record that does not match the chain.
-
-### Host the frontend
-
-1. A repository admin enables **Settings → Pages → Source: GitHub Actions** (one time).
-2. Optional: add a repository variable `VITE_RPC_URL` with an origin-restricted Sepolia
-   RPC URL. Without it, the site uses the public publicnode endpoint.
-3. Push to `main`, or run **Deploy frontend to GitHub Pages** from the Actions tab. The site
-   is published at https://plasmazero.github.io/damd-treasury-wallet/.
-
-The workflow skips publishing until `public/deployments/11155111.json` exists.
-
-To try the Sepolia build locally, set `VITE_CHAIN_ID=11155111` in `.env` and run `npm run dev`.
-
-### What graders need
-
-- Viewing balances, proposals, and history needs only the site URL.
-- Signing needs MetaMask and a little SepoliaETH. **Connect MetaMask** asks MetaMask to
-  switch to Sepolia automatically. To test owner/guardian actions, graders' addresses
-  must be members of a wallet: create one for them in the UI, or add them via governance.
-  You can also send them SepoliaETH from the deployer account so they can skip the faucet.
-
-Sepolia is public: anyone can call the contracts and every transaction is permanent and
-visible on Etherscan.
-
-### Source verification (optional)
-
-`artifacts/standard-input.json` contains the exact
+If `config/sepolia-wallet.json` does not exist, the deploy command deploys just the
+factory. Create a wallet in the UI. `artifacts/standard-input.json` contains the exact
 compiler input for source verification. Use Solidity 0.8.24, optimizer 200, EVM paris,
 and the factory contract path `contracts/TreasuryFactory.sol:TreasuryFactory`.
-Explorer verification and hosted deployment are manual tasks, not completed claims.
-After verifying on Etherscan, `ETHERSCAN_API_KEY=... npm run verify:deployment -- --network sepolia`
-confirms it.
+The manual deploy alternative does not perform acceptance or source verification. Use the
+automated CI path above for those checks. Public verification/hosted deployment are not
+completed claims until their actual runs succeed.
 
 `VITE_*` values are public in the browser. Use an origin-restricted, rate-limited RPC
 credential; do not put a deployer key in a `VITE_*` variable.
@@ -268,7 +235,7 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 | `src/services/walletService.js` | ethers.js reads, previews, writes, subscriptions |
 | `src/services/mockWalletService.js` | Standalone frontend development fixtures |
 | `src/contract/` | Generated ABIs, parameter encoding, error messages |
-| `scripts/` | Compile, local chain, deploy, deployment verification, smoke, browser test |
+| `scripts/` | Compile, local chain, deploy, smoke, browser test |
 | `docs/ARCHITECTURE.md` | Architecture, UML, state machines, design decisions |
 
 ## Scope and limitations
@@ -279,7 +246,8 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 - A colluding approval quorum cannot be distinguished from legitimate approvals.
   Limits and cancellation windows constrain actions; they do not eliminate collusion.
 - No unanimous fast path: approvals received after queueing never shorten/restart its timer.
-- Factory discovery reflects membership at creation. New members can add a wallet by address.
+- Factory membership indexing reflects creation time; the frontend scans factory events
+  and checks current membership. Large factory histories need an indexer beyond this MVP.
 - History scans logs in chunks; very large histories need indexing/pagination beyond this MVP.
 - Sepolia funding/deployment/verification and the manual MetaMask walkthrough remain your tasks.
 - Slither and Foundry are not part of this package; the story's Ganache/Node toolchain is used.
@@ -288,3 +256,4 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 
 Pinned versions are in `package.json` and `package-lock.json`. The implementation choices
 and differences from the input documents are recorded in [docs/DECISIONS.md](docs/DECISIONS.md).
+

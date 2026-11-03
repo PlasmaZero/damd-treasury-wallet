@@ -14,11 +14,14 @@
     "chain": "node scripts/chain.mjs",
     "deploy": "node scripts/deploy.mjs",
     "smoke": "node scripts/smoke.mjs",
-    "verify:deployment": "node scripts/verify-deployment.mjs",
     "test": "npm run compile && node --test --test-concurrency=1 test/*.test.mjs",
     "lint": "eslint .",
     "check": "npm run lint && npm test && npm run build",
-    "test:browser": "node scripts/browser-test.mjs"
+    "test:browser": "node scripts/browser-test.mjs",
+    "test:sepolia": "node scripts/sepolia.mjs",
+    "test:sepolia:ui": "node scripts/sepolia-ui.mjs",
+    "test:sepolia:summary": "node scripts/sepolia-summary.mjs",
+    "test:sepolia:rehearse": "node scripts/sepolia-rehearse.mjs"
   },
   "dependencies": {
     "react": "19.1.1",

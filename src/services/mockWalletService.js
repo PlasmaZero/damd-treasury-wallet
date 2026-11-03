@@ -18,7 +18,7 @@ export function createWalletService() {
   function isActive(r){return ['Pending','Queued','Ready'].includes(status(r));}
   function votes(by,members,needed){const live=by.filter(a=>members.includes(a));return {count:live.length,needed,by:live};}
   function proposalView(d,p){const c=d.config;return {...structuredClone(p),status:status(p),summary:describeAction(p.action,p.params),approvals:votes(p.approvals,c.owners,c.threshold),cancelVotes:votes(p.cancelVotes,c.owners,c.owners.length-c.threshold+1)};}
-  function recoveryView(d,r){const c=d.config;return {...structuredClone(r),status:status(r),approvals:votes(r.approvals,c.guardians,c.guardianThreshold),cancelVotes:votes(r.cancelVotes,c.owners.filter(a=>a!==r.oldOwner),c.threshold)};}
+  function recoveryView(d,r){const c=d.config,contractStatus=status(r),active=['Pending','Queued','Ready'].includes(contractStatus),invalidated=active&&!!r.invalidated;const blockedReason=invalidated?'The targeted owner membership was removed or replaced. This recovery cannot execute; cancel it or let it expire.':active&&[...c.owners,...c.guardians].includes(r.newOwner)?'The replacement address is already a member. Choose a fresh address in a new request, or resolve the membership conflict.':null;return {...structuredClone(r),contractStatus,status:invalidated?'Invalidated':contractStatus,blockedReason,approvals:votes(r.approvals,c.guardians,c.guardianThreshold),cancelVotes:votes(r.cancelVotes,c.owners.filter(a=>a!==r.oldOwner),c.threshold)};}
   function queue(d,r,recovery=false){const c=d.config;if(r.status!=='Pending')return;const needed=recovery?c.guardianThreshold:c.threshold,members=recovery?c.guardians:c.owners;if(votes(r.approvals,members,needed).count<needed)return;r.status='Queued';r.readyAt=now()+(recovery?c.delays.recoveryDelay:r.action==='Payment'?(r.params.amount<=c.limits.smallTierCap?c.delays.smallTierDelay:c.delays.largeTierDelay):c.delays.governanceDelay);}
   function newMember(d,a){a=getAddress(a);if(a===address(0)||stores.has(a))err('InvalidAddress');if([...d.config.owners,...d.config.guardians].includes(a))err('DuplicateAddress');return a;}
   function governance(d,action,p){const c=d.config;
@@ -33,7 +33,7 @@ export function createWalletService() {
     else if(action==='SetDelays')c.delays=Object.fromEntries(Object.entries(p).map(([k,v])=>[k,Number(v)]));else err('InvalidAction');
     validateConfig(c);
   }
-  function forget(d,a){for(const r of [...d.proposals,...d.recoveries]){r.approvals=r.approvals.filter(v=>v!==a);r.cancelVotes=r.cancelVotes.filter(v=>v!==a);}}
+  function forget(d,a){for(const r of d.recoveries)if(r.oldOwner===a&&isActive(r))r.invalidated=true;for(const r of [...d.proposals,...d.recoveries]){r.approvals=r.approvals.filter(v=>v!==a);r.cancelVotes=r.cancelVotes.filter(v=>v!==a);}}
   function transition(d,method,args){
     const c=d.config,owner=c.owners.includes(account),guardian=c.guardians.includes(account);if(!account)throw Error('Connect the mock account first.');
     const payment=(recipient,amount)=>{if(getAddress(recipient)===address(0)||stores.has(recipient))err('InvalidAddress');if(amount<=0n)err('AmountZero');if(amount>c.limits.perTxCap)err('AboveTxCap');};
@@ -57,7 +57,7 @@ export function createWalletService() {
     else if(method==='cancelRecovery'){if(account!==r.oldOwner)err('NotAuthorized');r.status='Cancelled';}
     else if(method==='execute'||method==='executeRecovery'){
       if(recovery&&!guardian&&account!==r.newOwner)err('NotAuthorized');if(r.status!=='Queued')err('WrongStatus');if(now()<r.readyAt)err('TimelockActive');if(votes(r.approvals,recovery?c.guardians:c.owners,recovery?c.guardianThreshold:c.threshold).count<(recovery?c.guardianThreshold:c.threshold))err('BelowThreshold');
-      if(recovery){if(!r.newOwnerConfirmed)err('NewOwnerNotConfirmed');governance(d,'ReplaceOwner',{oldOwner:r.oldOwner,newOwner:r.newOwner});}
+      if(recovery){if(r.invalidated)err('NotOwner');if(!r.newOwnerConfirmed)err('NewOwnerNotConfirmed');governance(d,'ReplaceOwner',{oldOwner:r.oldOwner,newOwner:r.newOwner});}
       else if(r.action==='Payment'){payment(r.params.recipient,r.params.amount);if(d.spent+r.params.amount>c.limits.dailyCap)err('DailyCapExceeded');if(d.balance<r.params.amount)err('InsufficientBalance');d.balance-=r.params.amount;d.spent+=r.params.amount;}
       else governance(d,r.action,r.params);r.status='Executed';
     }else err('InvalidAction');

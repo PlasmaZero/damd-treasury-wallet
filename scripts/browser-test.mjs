@@ -13,7 +13,7 @@ let vite, browser, page; const errors = [];
 const paths = ['deployments/1337.json', 'public/deployments/1337.json']; const originals = paths.map(p => fs.existsSync(p) ? fs.readFileSync(p) : null);
 function run(file, args) { return new Promise((resolve, reject) => { const p = spawn(file, args, { stdio: 'inherit', env: process.env }); p.on('error', reject); p.on('exit', code => code === 0 ? resolve() : reject(Error(`${file} exited ${code}`))); }); }
 try {
-  await server.listen(8545, '127.0.0.1'); await run(process.execPath, ['scripts/deploy.mjs']); await run(process.execPath, ['scripts/verify-deployment.mjs']);
+  await server.listen(8545, '127.0.0.1'); await run(process.execPath, ['scripts/deploy.mjs']);
   const accounts = Object.keys(server.provider.getInitialAccounts());
   vite = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5174'], { env: { ...process.env, VITE_USE_MOCK: 'false', VITE_CHAIN_ID: '1337', VITE_RPC_URL: 'http://127.0.0.1:8545' }, stdio: 'pipe' });
   await new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(Error('Vite startup timed out')), 15000); vite.stdout.on('data', d => { if (d.toString().includes('127.0.0.1:5174')) { clearTimeout(timeout); resolve(); } }); vite.on('error', reject); });
@@ -23,6 +23,7 @@ try {
     let selected = accounts[0]; const callbacks = {}; window.__setTestAccount = i => { selected = accounts[i]; for (const cb of callbacks.accountsChanged ?? []) cb([selected]); };
     window.ethereum = {
       on: (event, cb) => { (callbacks[event] ??= []).push(cb); }, removeListener: (event, cb) => { callbacks[event] = (callbacks[event] ?? []).filter(f => f !== cb); }, request: async ({ method, params = [] }) => {
+        if(method==='eth_sendTransaction'&&window.__rejectNextTransaction){window.__rejectNextTransaction=false;throw Object.assign(new Error('User rejected'),{code:4001});}
         if (method === 'eth_requestAccounts' || method === 'eth_accounts') return [selected];
         const response = await fetch('http://127.0.0.1:8545', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }) }); const data = await response.json(); if (data.error) throw data.error; return data.result;
       }
@@ -48,6 +49,73 @@ try {
   await page.evaluate(() => window.__setTestAccount(8)); await r.getByRole('button', { name: 'Confirm new account' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); await r.getByText('New owner confirmed', { exact: true }).waitFor(); await r.getByText('2/2 guardian approvals', { exact: true }).waitFor(); await server.provider.request({ method: 'evm_increaseTime', params: [181] }); await server.provider.request({ method: 'evm_mine', params: [] }); await r.getByRole('button', { name: 'Execute recovery' }).click({ timeout: 25000 }); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await r.locator('.badge').filter({ hasText: 'Executed' }).waitFor({ timeout: 25000 });
   await page.getByRole('button', { name: 'Activity', exact: false }).first().click(); await page.getByText('Recovery Executed', { exact: true }).waitFor({ timeout: 20000 });
   await page.getByRole('button', { name: 'Overview', exact: false }).first().click(); await page.getByRole('heading', { name: 'Add test funds' }).waitFor();
+  // M4 regression checks: independent treasuries and cancellation/failure UI.
+  const nav=async name=>{await page.locator('nav').getByRole('button',{name,exact:false}).click();};
+  const account=async i=>{await page.evaluate(i=>window.__setTestAccount(i),i);await page.getByText('Syncing…',{exact:true}).waitFor({state:'hidden'});};
+  const confirm=async()=>{await page.getByRole('button',{name:'Confirm in MetaMask',exact:true}).click();await page.getByText('Transaction confirmed.',{exact:true}).waitFor({timeout:25000});};
+  const advance=async seconds=>{await server.provider.request({method:'evm_increaseTime',params:[seconds]});await server.provider.request({method:'evm_mine',params:[]});await page.getByRole('button',{name:'Refresh',exact:true}).click();await page.getByText('Syncing…',{exact:true}).waitFor({state:'hidden'});};
+  const originalWallet=await page.getByLabel('Treasury wallet',{exact:true}).inputValue();
+  await account(0);await nav('Create wallet');
+  await page.getByLabel('Owners',{exact:true}).fill(accounts.slice(0,3).join(', '));
+  await page.getByLabel('Guardians',{exact:true}).fill(accounts.slice(5,7).join(', '));
+  await page.getByLabel('Owner threshold',{exact:true}).fill('1');
+  await page.getByText('One owner can authorize payments and governance changes.',{exact:false}).waitFor();
+  await page.getByLabel('Owner threshold',{exact:true}).fill('2');
+  await page.getByRole('button',{name:'Review wallet creation',exact:true}).click();await confirm();
+  await page.getByRole('heading',{name:'Add test funds'}).waitFor();
+  const secondWallet=await page.getByLabel('Treasury wallet',{exact:true}).inputValue();assert.notEqual(secondWallet,originalWallet);console.log('PASS: browser independent wallet creation and threshold warning.');
+  assert.match(await page.locator('.stat.hero').innerText(),/0\.0 ETH/);
+  await page.getByLabel('Deposit amount (ETH)').fill('0.2');
+  await page.getByRole('button',{name:'Review deposit',exact:true}).click();
+  await page.evaluate(()=>window.__rejectNextTransaction=true);
+  await page.getByRole('button',{name:'Confirm in MetaMask',exact:true}).click();
+  await page.getByText('You rejected the request in MetaMask.',{exact:false}).waitFor({timeout:25000});
+  await page.getByRole('button',{name:'Review deposit',exact:true}).click();await confirm();
+  await page.getByLabel('Treasury wallet',{exact:true}).selectOption(originalWallet);
+  await page.getByText('Syncing…',{exact:true}).waitFor({state:'hidden'});
+  assert.match(await page.locator('.stat.hero').innerText(),/0\.9 ETH/);
+  await page.getByLabel('Treasury wallet',{exact:true}).selectOption(secondWallet);
+  await nav('Proposals');await page.getByText('No proposals match this page.',{exact:true}).waitFor();
+  const propose=async()=>{await page.getByLabel('Recipient address',{exact:true}).fill(accounts[9]);await page.getByLabel('Amount (ETH)',{exact:true}).fill('0.1');await page.getByRole('button',{name:'Review payment proposal',exact:true}).click();await confirm();};
+  await propose();const cancelledPayment=page.locator('article').filter({hasText:'PROPOSAL #0'});
+  assert.equal(await cancelledPayment.getByRole('button',{name:'Execute',exact:true}).isDisabled(),true);
+  await account(1);await cancelledPayment.getByRole('button',{name:'Approve',exact:true}).click();await confirm();
+  await cancelledPayment.locator('.badge').filter({hasText:'Queued'}).waitFor();
+  assert.equal(await cancelledPayment.getByRole('button',{name:'Execute',exact:true}).isDisabled(),true);
+  // The contract/service regression suite independently checks the timelock revert.
+  await advance(16);await cancelledPayment.locator('.badge').filter({hasText:'Ready'}).waitFor();
+  await cancelledPayment.getByRole('button',{name:'Vote to cancel',exact:true}).click();await confirm();
+  await account(0);await cancelledPayment.getByRole('button',{name:'Vote to cancel',exact:true}).click();await confirm();
+  await cancelledPayment.locator('.badge').filter({hasText:'Cancelled'}).waitFor();
+  await propose();await advance(86401);
+  await page.locator('article').filter({hasText:'PROPOSAL #1'}).locator('.badge').filter({hasText:'Expired'}).waitFor();
+  console.log('PASS: browser signature rejection/retry, treasury isolation, cancellation and expiry.');
+  await account(5);await nav('Recovery');
+  const requestRecovery=async()=>{await page.getByLabel('Lost owner address').selectOption({label:getAddress(accounts[2])});await page.getByLabel('New owner address',{exact:true}).fill(accounts[8]);await page.getByRole('button',{name:'Review recovery request',exact:true}).click();await confirm();};
+  await requestRecovery();const direct=page.locator('article').filter({hasText:'Recovery #0'});
+  await account(2);await direct.getByRole('button',{name:'Cancel directly',exact:true}).click();await confirm();await direct.locator('.badge').filter({hasText:'Cancelled'}).waitFor();
+  await account(5);await requestRecovery();const voted=page.locator('article').filter({hasText:'Recovery #1'});
+  await account(6);await voted.getByRole('button',{name:'Approve',exact:true}).click();await confirm();
+  for(const i of [0,1]){await account(i);await voted.getByRole('button',{name:'Vote to cancel',exact:true}).click();await confirm();}
+  await voted.locator('.badge').filter({hasText:'Cancelled'}).waitFor();
+  await account(5);await requestRecovery();
+  await account(0);await nav('Governance');
+  await page.getByLabel('Action',{exact:true}).selectOption('ReplaceOwner');
+  await page.getByLabel('Old Owner',{exact:true}).fill(accounts[2]);
+  await page.getByLabel('New Owner',{exact:true}).fill(accounts[10]);
+  await page.getByRole('button',{name:'Review governance proposal',exact:true}).click();await confirm();
+  await nav('Proposals');const replacement=page.locator('article').filter({hasText:'PROPOSAL #2'});
+  await account(1);await replacement.getByRole('button',{name:'Approve',exact:true}).click();await confirm();
+  await advance(121);await replacement.getByRole('button',{name:'Execute',exact:true}).click();await confirm();
+  await nav('Recovery');const stale=page.locator('article').filter({hasText:'Recovery #2'});
+  await stale.locator('.badge').filter({hasText:'Invalidated'}).waitFor();
+  await stale.locator('.notice').getByText('The targeted owner membership was removed or replaced.',{exact:false}).waitFor();
+  assert.equal(await stale.getByRole('button',{name:'Execute recovery',exact:true}).isDisabled(),true);
+  await account(2);await stale.getByRole('button',{name:'Cancel directly',exact:true}).click();await confirm();
+  await stale.locator('.badge').filter({hasText:'Cancelled'}).waitFor();
+  console.log('PASS: M4 multi-treasury isolation, low-threshold warning, signature rejection, early-execution UI guard, payment cancellation/expiry and both recovery cancellation routes.');
+  await nav('Overview');await page.getByRole('heading',{name:'Add test funds'}).waitFor();
+
   fs.mkdirSync('test-results', { recursive: true }); await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 }); await page.screenshot({ path: 'test-results/mobile.png', fullPage: true }); assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Mobile has horizontal overflow');
   assert.deepEqual(errors, []); console.log('PASS: browser connect, deposit, multi-account payment, governance, full recovery, history, desktop and mobile.');
@@ -57,3 +125,4 @@ try {
   await browser?.close(); if (vite) { vite.kill(); await once(vite, 'exit').catch(() => { }); } await server.close();
   paths.forEach((p, i) => { if (originals[i]) fs.writeFileSync(p, originals[i]); else fs.rmSync(p, { force: true }); });
 }
+

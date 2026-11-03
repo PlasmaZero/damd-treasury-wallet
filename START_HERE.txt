@@ -16,3 +16,12 @@ GitHub replacement steps: docs/GITHUB_UPDATE.md
 Recovery and governance demonstration: docs/DEMO.md
 
 TEST FUNDS ONLY. This is a course MVP, not an audited production wallet.
+
+MILESTONE 4 CHECKPOINT: docs/MILESTONE4.md
+FULL TEST PLAN: docs/TEST_PLAN.md
+Redeploy locally for this version; do not reuse M3 contracts.
+Public deployment and comprehensive integration reporting are Milestone 5 work.
+
+AUTOMATED SEPOLIA CI SETUP: docs/SEPOLIA_CI.md
+Public deployment/function/source checks are implemented but require GitHub secrets and
+a funded Sepolia account. A passing local rehearsal is not a completed public run.

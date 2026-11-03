@@ -33,12 +33,7 @@ export function compile() {
       evmVersion: "paris",
       outputSelection: {
         "*": {
-          "*": [
-            "abi",
-            "evm.bytecode.object",
-            "evm.deployedBytecode.object",
-            "evm.deployedBytecode.immutableReferences",
-          ],
+          "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object", "evm.deployedBytecode.immutableReferences"],
         },
       },
     },

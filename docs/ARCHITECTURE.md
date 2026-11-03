@@ -164,3 +164,63 @@ status. Expired is also derived. Failed execution leaves the preceding state unc
 | WalletService facade | Keep RPC, ABI decoding and signing out of components | Additional abstraction and integration tests |
 | Events invalidate storage reads | Recover from missed events and reconnects | More RPC reads; large histories eventually need indexing |
 | Typed governance actions | Prevent arbitrary call execution and enable readable previews | Adding action types requires a new immutable implementation |
+
+
+## Milestone 4 semantics and interfaces
+
+### Pending and queued requests under governance changes
+
+Proposals and recoveries start Pending. The proposer/initiator auto-approves; `_queue`
+or `_queueRecovery` runs when creating a request or receiving another approval. It
+starts the timer only on the first Pending-to-Queued transition. Lowering a threshold
+alone does not queue existing Pending requests; an approval transaction must trigger
+that transition. A pending owner approval can be revoked and cast again if necessary.
+
+Once Queued, a request stays Queued even if membership/threshold changes reduce its live
+quorum. Execution rechecks current quorum. Restoring quorum never restarts the original
+readyAt: once the original delay has elapsed, execution can proceed immediately subject
+to expiry and all other checks. Queued owner approvals cannot be revoked; cancellation
+is the available veto. Delay changes and spending-tier changes do not retroactively
+recompute readyAt. This preserves the original queued delay rather than promising a new
+monitoring window whenever quorum changes.
+
+Payments recheck the current per-payment/daily caps and balance at execution; governance
+revalidates action parameters against current membership/configuration. Cancellation
+counts current generation-aware votes against the current threshold. Threshold changes
+alone do not finalize cancellation: another valid cancellation vote triggers the check.
+If every current member has already voted after a threshold reduction, expiry remains
+available; this checkpoint preserves that existing event-driven cancellation policy.
+Expiry remains fixed from request creation, including when proposal/recovery TTL changes.
+
+### Recovery validity and presentation
+
+`isRecoveryTargetCurrent(id)` checks both owner membership and the captured generation.
+A removed-and-readded address therefore cannot revive a stale recovery. The service uses
+this view to label active stale requests Invalidated without changing Solidity enum
+values or stored statuses. It exposes `contractStatus` and `blockedReason`; the UI keeps
+cancellation available but disables approval/confirmation/execution of invalidated requests.
+Terminal Executed/Cancelled/Expired statuses remain unchanged. A new-owner membership
+conflict is explained separately because it may be resolved by later governance.
+Invalidation does not clear address reservations: cancel or wait for expiry before reuse.
+
+Generation changes invalidate old approvals and cancellation votes for both owner and
+guardian roles. The mock marks recovery targets invalid when owner membership is removed
+or replaced and exposes the same display fields; it remains a UI fixture, not an EVM clone.
+
+### Discovery, freshness and risk guidance
+
+The factory's `walletsOf` index is historical. The service scans WalletCreated events in
+adaptive chunks, then checks current member roles at a common block. Thus members added
+through governance/recovery can discover wallets without local storage. The UI refreshes
+discovery as selected-wallet blocks advance and on account/wallet changes; reconnect or
+manual selection refreshes it when no wallet is selected. Other-factory wallets require
+manual address entry. Full scans are acceptable for this local course-sized dataset;
+production indexing, caching, and chain-reorganization handling are deferred.
+
+Warnings on creation, overview, recovery and relevant governance settings explain M=1,
+M=N (no possible M-other-owner veto), and K=G (no spare guardian). Loss of guardian quorum
+requires owner governance while an owner quorum is still available. A stolen target key
+can veto guardian recovery, so a remaining owner quorum must replace that address through
+governance. There is no bypass if both quorums become inaccessible. The interface cannot
+detect whether a private key is actually lost; it explains the limits without claiming
+an unavailable-key detector or adding a privileged administrator.

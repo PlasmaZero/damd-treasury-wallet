@@ -30,7 +30,8 @@ when the displayed contract address and value match the website's preview.
 - [ ] As account 0, propose Add Owner for account 10.
 - [ ] Accounts 1 and 2 approve; wait the current 120-second governance delay.
 - [ ] Execute: account 10 appears in Owners. N becomes 6 and cancel threshold becomes 4.
-- [ ] The new owner manually adds this wallet by address if it is absent from discovery.
+- [ ] The new owner sees this wallet through factory-event/current-membership discovery,
+  including in a fresh browser. A wallet from a different factory can be added by address.
 - [ ] Verify changing a limit or delay also requires a proposal and the existing delay.
 
 ## Lost-owner recovery
@@ -62,3 +63,10 @@ The automated browser test covers connect, deposit, multi-account approval/execu
 governance, full recovery, history, and narrow layout using a local wallet adapter.
 This manual checklist is for the actual MetaMask extension; do not mark it complete
 merely because automation passes.
+
+## M4 independent grading and later integration
+
+Use docs/TEST_PLAN.md for the exact 3-owner/2-guardian grading walkthrough, configuration
+warnings, stale recovery invalidation, and the planned MetaMask/reconnect scenarios.
+This demo uses local test funds; public deployment and the integration-results report
+remain Milestone 5 work.

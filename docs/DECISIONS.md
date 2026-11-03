@@ -21,7 +21,8 @@ The older context recommends a future Foundry migration; that migration is not i
 The internal voting storage extends the sketch with **membership generations**. Votes
 record the member's generation when cast. Removing/replacing a member makes those votes
 inactive; re-adding the same address increments its generation, so old votes cannot revive.
-The ABI is unchanged. The recovery also remembers the target's generation, preventing a
+The generation-aware voting implementation preserved the original ABI. M4 adds only
+the read-only isRecoveryTargetCurrent(uint256) view; existing methods/enums are unchanged. The recovery also remembers the target's generation, preventing a
 stale recovery from targeting a later rejoined membership. A regression test covers
 remove/re-add vote invalidation. The internal sketches were not a merged repository here;
 review these changes jointly with the contract and frontend leads before merging.
@@ -58,3 +59,13 @@ is allowed by the frozen spec, so its owner controls actions alone. Use demo fun
 - ethers v6 contracts/providers: https://docs.ethers.org/v6/single-page/
 - OpenZeppelin utilities: https://docs.openzeppelin.com/contracts/5.x/api/utils
 - Dependency versions are pinned; source verification uses the emitted standard JSON input.
+
+
+## Automated public testnet verification followup
+
+CI now includes a trusted-main Sepolia job after local verification. It creates disposable
+multi-signer proof wallets, compares deployed runtime with the compiled build, performs
+transaction assertions, verifies source on Etherscan and checks production frontend reads.
+The earlier statement that verification is manual applies only to the separate manual deploy
+alternative. Automation is implemented; actual public execution still requires setup and a
+funded account. See SEPOLIA_CI.md for evidence requirements and remaining acceptance scope.
