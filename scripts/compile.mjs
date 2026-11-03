@@ -33,7 +33,12 @@ export function compile() {
       evmVersion: "paris",
       outputSelection: {
         "*": {
-          "*": ["abi", "evm.bytecode.object", "evm.deployedBytecode.object"],
+          "*": [
+            "abi",
+            "evm.bytecode.object",
+            "evm.deployedBytecode.object",
+            "evm.deployedBytecode.immutableReferences",
+          ],
         },
       },
     },
@@ -76,6 +81,8 @@ export function compile() {
         sourceName: file,
         abi: c.abi,
         bytecode: `0x${c.evm.bytecode.object}`,
+        deployedBytecode: `0x${c.evm.deployedBytecode.object}`,
+        immutableReferences: c.evm.deployedBytecode.immutableReferences ?? {},
         deployedBytes: bytes,
       };
       artifacts[name] = artifact;

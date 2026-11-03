@@ -1,0 +1,69 @@
+name: Deploy frontend to GitHub Pages
+# Builds the Sepolia frontend and publishes it at https://<owner>.github.io/<repo>/.
+# One-time setup: Settings → Pages → Source: GitHub Actions.
+# Optional: Settings → Secrets and variables → Actions → Variables → VITE_RPC_URL
+# (an origin-restricted Sepolia RPC URL; it is public in the built site).
+# Optional: Actions secrets SEPOLIA_RPC_URL (used by deployment verification instead of
+# the public fallback RPC) and ETHERSCAN_API_KEY (also checks Etherscan source verification).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      ready: ${{ steps.check.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: check
+        name: Check for a Sepolia deployment record
+        run: |
+          if [ -f public/deployments/11155111.json ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::No public/deployments/11155111.json yet. Run npm run deploy -- --network sepolia and commit it."
+          fi
+      - if: steps.check.outputs.ready == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - if: steps.check.outputs.ready == 'true'
+        run: npm ci
+      - if: steps.check.outputs.ready == 'true'
+        name: Verify the Sepolia deployment record against the chain
+        run: npm run verify:deployment -- --network sepolia
+        env:
+          SEPOLIA_RPC_URL: ${{ secrets.SEPOLIA_RPC_URL }}
+          ETHERSCAN_API_KEY: ${{ secrets.ETHERSCAN_API_KEY }}
+      - if: steps.check.outputs.ready == 'true'
+        run: npm run build
+        env:
+          BASE_PATH: /${{ github.event.repository.name }}/
+          VITE_USE_MOCK: 'false'
+          VITE_CHAIN_ID: '11155111'
+          VITE_RPC_URL: ${{ vars.VITE_RPC_URL }}
+      - if: steps.check.outputs.ready == 'true'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    needs: build
+    if: needs.build.outputs.ready == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

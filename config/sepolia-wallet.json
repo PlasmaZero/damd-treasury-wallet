@@ -1,0 +1,7 @@
+{
+  "owners": ["0xd7C3C4b6f79F785AB415EC66993E8b74E820F73A", "0x6239b5dF0f8721c3F5072a167e90Bb03119f3f74", "0xec85A150826a90597bC2566dD827C84d3cFEF957"],
+  "guardians": ["0x79A9cBFEFFA414652AbC92F56a7B53ADAF3E3b2A", "0xf2f5E496ba50ec430065860D43B3310F5D449674"],
+  "threshold": 2, "guardianThreshold": 2,
+  "limits": {"perTxCap":"2000000000000000000","dailyCap":"5000000000000000000","smallTierCap":"500000000000000000"},
+  "delays": {"smallTierDelay":15,"largeTierDelay":60,"governanceDelay":120,"recoveryDelay":180,"proposalTTL":86400,"recoveryTTL":86400}
+}
