@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { JsonRpcProvider, Wallet, ContractFactory, getAddress } from "ethers";
 import { compile, root } from "./compile.mjs";
 
@@ -85,14 +86,37 @@ for (const dir of ["deployments", "public/deployments"])
   );
 console.log(JSON.stringify(deployment, null, 2));
 if (network === "sepolia") {
-  console.log(`Factory: https://sepolia.etherscan.io/address/${factoryAddress}`);
-  if (demoWallet)
-    console.log(`Demo wallet: https://sepolia.etherscan.io/address/${demoWallet}`);
   console.log(
-    `Commit deployments/${chainId}.json and public/deployments/${chainId}.json so the hosted site can find these contracts.`,
+    `Factory: https://sepolia.etherscan.io/address/${factoryAddress}`,
   );
+  if (demoWallet)
+    console.log(
+      `Demo wallet: https://sepolia.etherscan.io/address/${demoWallet}`,
+    );
 }
 console.log(
   "Deployment complete. Treasury starts empty. Deposit through the app.",
 );
 provider.destroy();
+if (network === "sepolia") {
+  // Publish the source now so the Pages workflow's Etherscan check passes.
+  if (!process.env.ETHERSCAN_API_KEY)
+    console.log(
+      "Set ETHERSCAN_API_KEY in .env and run npm run verify:etherscan to publish the source.",
+    );
+  else if (
+    spawnSync(
+      process.execPath,
+      [path.join(root, "scripts/verify-etherscan.mjs")],
+      {
+        stdio: "inherit",
+      },
+    ).status !== 0
+  )
+    console.log(
+      "Etherscan verification did not finish. The contracts ARE deployed; do not redeploy. Run npm run verify:etherscan to retry.",
+    );
+  console.log(
+    `Commit deployments/${chainId}.json and public/deployments/${chainId}.json so the hosted site can find these contracts.`,
+  );
+}

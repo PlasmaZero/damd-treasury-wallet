@@ -168,7 +168,8 @@ the frontend from GitHub Pages. Graders need only a browser and MetaMask.
 2. Get a Sepolia RPC URL (Alchemy or Infura free tier, or
    `https://ethereum-sepolia-rpc.publicnode.com`).
 3. Copy `.env.example` to `.env`. Set `SEPOLIA_RPC_URL` and `DEPLOYER_KEY` (the test-only
-   deployer's private key). `.env` is git-ignored; never commit it.
+   deployer's private key), and `ETHERSCAN_API_KEY` (free at https://etherscan.io/myapikey)
+   so the deploy also publishes the source. `.env` is git-ignored; never commit it.
 4. Optional demo wallet: copy `config/demo-wallet.json` to `config/sepolia-wallet.json`
    and add `owners` and `guardians` arrays with the team's Sepolia addresses (disjoint,
    meeting the thresholds). Amounts are **wei strings**. Without this file, only the
@@ -179,6 +180,8 @@ the frontend from GitHub Pages. Graders need only a browser and MetaMask.
    npm run deploy -- --network sepolia
    ```
 
+   With `ETHERSCAN_API_KEY` set, this also verifies the factory and demo wallet on Etherscan
+   (see [Source verification](#source-verification-on-etherscan)).
 6. Check the deployment (read-only, sends no transactions):
 
    ```sh
@@ -232,14 +235,24 @@ To try the Sepolia build locally, set `VITE_CHAIN_ID=11155111` in `.env` and run
 Sepolia is public: anyone can call the contracts and every transaction is permanent and
 visible on Etherscan.
 
-### Source verification (optional)
+### Source verification on Etherscan
 
-`artifacts/standard-input.json` contains the exact
-compiler input for source verification. Use Solidity 0.8.24, optimizer 200, EVM paris,
-and the factory contract path `contracts/TreasuryFactory.sol:TreasuryFactory`.
-Explorer verification and hosted deployment are manual tasks, not completed claims.
-After verifying on Etherscan, `ETHERSCAN_API_KEY=... npm run verify:deployment -- --network sepolia`
-confirms it.
+With `ETHERSCAN_API_KEY` in `.env`, `npm run deploy -- --network sepolia` does this
+automatically right after deploying. If that step fails, the contracts are still deployed:
+do not redeploy. Retry it (or verify an older deployment) from the commit that was deployed:
+
+```sh
+npm run verify:etherscan
+```
+
+This uploads the source of the recorded factory and demo wallet (Solidity 0.8.24, optimizer 200,
+EVM paris, standard JSON input without the test contracts) and waits for Etherscan's result.
+Contracts that are already verified are skipped. A wallet's constructor arguments are read from
+the `createWallet` transaction that made it. To verify wallets created in the UI, pass their
+addresses: `npm run verify:etherscan -- 0x...`. `--dry-run` shows what would be submitted.
+
+Once the `ETHERSCAN_API_KEY` repository secret is set, the GitHub Pages workflow's
+`verify:deployment` step fails until both contracts are verified.
 
 `VITE_*` values are public in the browser. Use an origin-restricted, rate-limited RPC
 credential; do not put a deployer key in a `VITE_*` variable.
@@ -268,7 +281,7 @@ See [docs/GITHUB_UPDATE.md](docs/GITHUB_UPDATE.md) for exact Windows copy/push s
 | `src/services/walletService.js` | ethers.js reads, previews, writes, subscriptions |
 | `src/services/mockWalletService.js` | Standalone frontend development fixtures |
 | `src/contract/` | Generated ABIs, parameter encoding, error messages |
-| `scripts/` | Compile, local chain, deploy, deployment verification, smoke, browser test |
+| `scripts/` | Compile, local chain, deploy, deployment and Etherscan verification, smoke, browser test |
 | `docs/ARCHITECTURE.md` | Architecture, UML, state machines, design decisions |
 
 ## Scope and limitations
