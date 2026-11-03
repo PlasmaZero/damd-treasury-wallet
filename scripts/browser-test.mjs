@@ -30,8 +30,11 @@ try {
       }
     };
   }, { accounts });
-  await page.goto('http://127.0.0.1:5174'); await page.getByRole('heading', { name: 'Add test funds' }).waitFor(); await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).click(); await page.getByRole('button', { name: 'Review deposit' }).waitFor();
-  await page.getByLabel('Deposit amount (ETH)').fill('1'); await page.getByRole('button', { name: 'Review deposit' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 });
+  await page.goto('http://127.0.0.1:5174'); await page.getByRole('heading', { name: 'Add test funds' }).waitFor(); await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).click();
+  // Connecting reloads the treasury view, which remounts the deposit form with its 0.1 default.
+  // "Review deposit" is already visible read-only, so wait for the connected owner view instead.
+  await page.locator('.account-area .role').filter({ hasText: 'Owner' }).waitFor({ timeout: 25000 }); await page.getByRole('button', { name: 'Review deposit' }).waitFor();
+  await page.getByLabel('Deposit amount (ETH)').fill('1'); await page.getByRole('button', { name: 'Review deposit' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); await page.locator('.stat.hero').filter({ hasText: '1.0 ETH' }).waitFor({ timeout: 25000 });
   await page.getByRole('button', { name: 'Proposals', exact: false }).first().click(); await page.getByLabel('Recipient address', { exact: true }).fill(accounts[9]); await page.getByLabel('Amount (ETH)', { exact: true }).fill('0.1'); await page.getByRole('button', { name: 'Review payment proposal' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('PROPOSAL #0', { exact: false }).waitFor({ timeout: 25000 });
   const proposal = page.locator('article').filter({ hasText: 'PROPOSAL #0' });
   for (const index of [1, 2]) { await page.evaluate(i => window.__setTestAccount(i), index); await proposal.getByRole('button', { name: 'Approve', exact: true }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); }
