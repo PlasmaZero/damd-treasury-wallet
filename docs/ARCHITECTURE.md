@@ -188,8 +188,21 @@ Payments recheck the current per-payment/daily caps and balance at execution; go
 revalidates action parameters against current membership/configuration. Cancellation
 counts current generation-aware votes against the current threshold. Threshold changes
 alone do not finalize cancellation: another valid cancellation vote triggers the check.
-If every current member has already voted after a threshold reduction, expiry remains
-available; this checkpoint preserves that existing event-driven cancellation policy.
+
+**Known limitation (deployed contracts):** `execute()` and `executeRecovery()` do not
+check cancellation votes. The cancel threshold (`owners - threshold + 1` for proposals,
+`threshold` for recoveries) can drop below the votes already cast, when M is raised or an
+owner is removed. The request then stays Queued and remains executable until another
+owner casts a cancel vote. If every remaining owner has already voted, nobody can cast
+that vote, so the veto can never be finalized. Example: 3 owners with M=1 means cancelling
+needs 3 votes. A and B vote; governance removes C. Cancelling now needs 2, and A and B
+already have 2, but `AlreadyVoted` prevents re-voting. Any owner can still execute the
+payment. The fix is to make execution revert (or mark the request Cancelled) when
+`cancelVotes(id) >= cancelThreshold()`. It changes runtime bytecode, so it needs a Sepolia
+redeploy (`verify:deployment` blocks Pages publishing until then) and is deferred to that
+redeploy. Until then, owners who want a veto should vote before any membership or
+threshold change executes.
+
 Expiry remains fixed from request creation, including when proposal/recovery TTL changes.
 
 ### Recovery validity and presentation

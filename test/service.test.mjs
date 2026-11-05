@@ -17,8 +17,10 @@ test('real service integrates creation, deposits, previews, approvals, execution
   await api.deposit(w,E('1'));assert.equal((await api.snapshot(w)).balance,E('1'));
   const preview=await api.preview(w,'proposePayment',[f.accounts[9],E('3')]);assert.equal(preview.ok,false);assert.equal(preview.error.code,'AboveTxCap');
   const p=await api.proposePayment(w,f.accounts[9],E('0.1'));assert.equal(p.id,0);assert.equal((await api.getProposal(w,0)).approvals.count,1);
+  // History is scanned incrementally: an early scan must not hide or duplicate later events.
+  assert.ok(!(await api.getHistory(w)).some(h=>h.event==='PaymentSent'));
   eth.setAccount(1);assert.equal(api.getAccount(),f.accounts[1]);await api.approve(w,0);assert.equal((await api.getProposal(w,0)).status,'Queued');await f.advance(2);assert.equal((await api.getProposal(w,0)).status,'Ready');await api.execute(w,0);
-  assert.equal((await api.getProposal(w,0)).status,'Executed');assert.equal((await api.snapshot(w)).balance,E('0.9'));assert.ok((await api.getHistory(w)).some(h=>h.event==='PaymentSent'));
+  assert.equal((await api.getProposal(w,0)).status,'Executed');assert.equal((await api.snapshot(w)).balance,E('0.9'));{const h=await api.getHistory(w);assert.ok(h.some(x=>x.event==='PaymentSent'));assert.equal(new Set(h.map(x=>`${x.txHash}:${x.logIndex}`)).size,h.length);}
   const proposals=await api.listProposals(w,{offset:0,limit:10});assert.equal(proposals.length,1);assert.deepEqual(await api.listProposals(w,{offset:10}),[]);
   eth.setWrong(true);await assert.rejects(api.connect(),e=>e.code==='WRONG_NETWORK');assert.equal(api.getAccount(),null);eth.setWrong(false);await api.connect();eth.reject(true);await assert.rejects(api.deposit(w,1n),e=>e.code==='USER_REJECTED');
  }finally{f.provider.destroy();await f.rpc.disconnect();}

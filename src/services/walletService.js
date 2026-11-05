@@ -3,14 +3,17 @@ import treasuryAbi from '../contract/abi/Treasury.json' with {type:'json'};
 import factoryAbi from '../contract/abi/TreasuryFactory.json' with {type:'json'};
 import {ACTION_TYPES,STATUS,decodeParams,describeAction,encodeParams,validateConfig} from '../contract/params.js';
 import {toTxError} from '../contract/errors.js';
+import {withMissingBlockRetry} from './rpcRetry.js';
 
+// Logs this close to the head are rescanned on each incremental scan in case of a reorg.
+const REORG_DEPTH=5;
 const CHAINS={1337:{chainName:'DAMD Local'},11155111:{chainName:'Sepolia',blockExplorerUrls:['https://sepolia.etherscan.io']}};
 
 export function createWalletService(config) {
   const ethereum=config.ethereum??globalThis.window?.ethereum;
   // staticNetwork stops ethers sending eth_chainId before most reads (it was ~40% of all RPC calls);
   // assertNetwork checks the RPC's chain once instead. Sepolia mines every ~12s, so poll less often.
-  const provider=config.provider??new JsonRpcProvider(config.rpcUrl,config.chainId,{staticNetwork:true,cacheTimeout:0,pollingInterval:config.chainId===1337?2000:4000});
+  const provider=config.provider??withMissingBlockRetry(new JsonRpcProvider(config.rpcUrl,config.chainId,{staticNetwork:true,cacheTimeout:0,pollingInterval:config.chainId===1337?2000:4000}));
   let rpcChain=null;
   let account=null, session=0;
   const listeners=new Set();
@@ -151,6 +154,25 @@ export function createWalletService(config) {
     }
     return result;
   }
+  // Log scans were full rescans from deployment on every call (wallet discovery after each
+  // transaction, Activity on each block), so their cost grew with chain age. Keep what was
+  // scanned and fetch only new blocks, re-reading the last few in case of a reorg.
+  // Calls for one key run in order so concurrent refreshes share the work.
+  const scans=new Map(),scanQueue=new Map();
+  function scanIncremental(key,filter,first,end) {
+    const run=(scanQueue.get(key)??Promise.resolve()).catch(()=>{}).then(async()=>{
+      const s=scans.get(key)??{to:first-1,logs:[]};
+      const from=Math.max(first,s.to-REORG_DEPTH+1);
+      if(from<=end) scans.set(key,{to:end,logs:[...s.logs.filter(l=>l.blockNumber<from),...await scanLogs(filter,from,end)]});
+      return scans.get(key)?.logs??[];
+    });
+    scanQueue.set(key,run);return run;
+  }
+  const deployBlocks=new Map();
+  function deployedAt(key,read) {
+    if(!deployBlocks.has(key)) deployBlocks.set(key,read().then(Number).catch(e=>{deployBlocks.delete(key);throw e;}));
+    return deployBlocks.get(key);
+  }
   const api={
     async connect() {
       if(!ethereum) throw Error('Install MetaMask to connect a wallet.');
@@ -162,18 +184,19 @@ export function createWalletService(config) {
       if(a&&config.factory) {
         // Creation-time indexing misses later governance/recovery members. Discover the
         // factory's wallets, then check authoritative membership at one block.
-        const f=factory();
-        const logs=await scanLogs({address:config.factory,topics:[factoryInterface.getEvent('WalletCreated').topicHash]},Number(await f.deployedAtBlock()),end);
-        for(const log of logs)found.push(factoryInterface.parseLog(log).args.wallet);
+        const f=factory(),start=await deployedAt(`factory:${config.factory}`,()=>Number.isInteger(config.factoryDeployedAtBlock)?Promise.resolve(config.factoryDeployedAtBlock):f.deployedAtBlock());
+        const logs=await scanIncremental(`factory:${config.factory}`,{address:config.factory,topics:[factoryInterface.getEvent('WalletCreated').topicHash]},start,end);
+        for(const log of logs)found.push(getAddress(factoryInterface.parseLog(log).args.wallet));
       }
-      const live=[];for(const w of new Set(found)) {const c=treasury(w);if(await c.isOwner(a,{blockTag:end})||await c.isGuardian(a,{blockTag:end})) live.push(getAddress(w));}
-      return [...new Set([...live,...known])];
+      const wallets=[...new Set(found)],tag={blockTag:end};
+      const member=await Promise.all(wallets.map(async w=>{const c=treasury(w);const [o,g]=await Promise.all([c.isOwner(a,tag),c.isGuardian(a,tag)]);return o||g;}));
+      return [...new Set([...wallets.filter((_,i)=>member[i]),...known])];
     },addKnownWallet,snapshot,preview,subscribe,
     listProposals:(w,o)=>list(w,o),getProposal:async(w,id)=>proposalView(id,await context(w)),
     listRecoveries:(w,o)=>list(w,o,true),getRecovery:async(w,id)=>recoveryView(id,await context(w)),
     async getHistory(wallet) {
-      const c=treasury(wallet),end=await provider.getBlockNumber(),result=[];
-      const logs=await scanLogs({address:wallet},Number(await c.deployedAtBlock()),end);
+      const w=getAddress(wallet),c=treasury(w),end=await provider.getBlockNumber(),result=[];
+      const logs=await scanIncremental(`wallet:${w}`,{address:w},await deployedAt(`wallet:${w}`,()=>c.deployedAtBlock()),end);
       for(const log of logs) {const e=iface.parseLog(log);if(e) result.push({blockNumber:log.blockNumber,logIndex:log.index,txHash:log.transactionHash,event:e.name,args:e.args.toObject(true)});}
       return result.reverse();
     },
