@@ -93,7 +93,7 @@ sequenceDiagram
       MM->>T: execute
       T->>R: Transfer ETH
       alt recipient rejects
-        T-->>UI: TransferFailed; revert all effects
+        T-->>UI: TransferFailed&#59; revert all effects
       else succeeds
         T-->>UI: PaymentSent, Executed
       end
