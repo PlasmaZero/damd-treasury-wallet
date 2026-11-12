@@ -3,7 +3,8 @@
 ## Prerequisites and local setup
 
 Use Node.js **22.12 or later**, npm, Git and MetaMask for manual signing. CI uses
-Node 22. Dependencies and solc are pinned by package-lock.json. No server-side
+Node 22 on Ubuntu 24.04, pinned for Playwright OS compatibility. Dependencies and
+solc are pinned by package-lock.json. No server-side
 application, database or private key is needed to run the local integration suite.
 
 ```sh
