@@ -45,7 +45,51 @@ try {
       }
     };
   }, { accounts });
-  await page.goto(`http://127.0.0.1:5174${basePath}`); await page.getByRole('heading', { name: 'Add test funds' }).waitFor(); await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).click();
+  await page.goto(`http://127.0.0.1:5174${basePath}`); await page.getByRole('heading', { name: 'Add test funds' }).waitFor();
+  // Public RPC log reads can be slower than multiple block/snapshot refreshes.
+  // They must still display their result, without needing a MetaMask connection.
+  let logMode='slow',historyReads=0;
+  const historyRpc=async route=>{
+    const body=route.request().postDataJSON(),requests=Array.isArray(body)?body:[body];
+    if(!requests.some(r=>r.method==='eth_getLogs'))return route.continue();
+    historyReads++;
+    const mode=logMode,response=await route.fetch();
+    if(mode==='slow')await new Promise(resolve=>setTimeout(resolve,6500));
+    if(mode==='fail'){
+      const data=await response.json(),responses=Array.isArray(data)?data:[data];
+      const failed=responses.map(r=>requests.some(q=>q.id===r.id&&q.method==='eth_getLogs')?{jsonrpc:'2.0',id:r.id,error:{code:-32005,message:'History RPC unavailable for regression test'}}:r);
+      return route.fulfill({json:Array.isArray(data)?failed:failed[0]});
+    }
+    return route.fulfill({response});
+  };
+  await page.route('http://127.0.0.1:8545',historyRpc);
+  await page.locator('nav').getByRole('button',{name:'Activity',exact:false}).click();
+  await page.getByRole('status').filter({hasText:'Loading event history'}).waitFor();
+  await page.getByText('Owner Added',{exact:true}).first().waitFor({timeout:30000});
+  await page.getByText('Guardian Added',{exact:true}).first().waitFor();
+  assert.ok(historyReads>0);assert.equal(await page.locator('.account-area .role').innerText(),'Read only');
+  // Keep retries deterministic after proving that several mined blocks did not
+  // invalidate the slow first response. Resume mining before transaction tests.
+  await server.provider.request({method:'miner_stop',params:[]});
+  logMode='fail';
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  const historyError=page.getByRole('alert').filter({hasText:'Could not load event history.'});
+  await historyError.waitFor({timeout:30000});
+  assert.ok(await page.getByText('Owner Added',{exact:true}).count()>0,'an RPC failure must preserve existing events');
+  // A successful snapshot refresh must not clear a history-specific failure.
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.getByRole('button',{name:'Refresh',exact:true}).waitFor();
+  assert.equal(await historyError.isVisible(),true);
+  logMode='healthy';
+  await page.getByRole('button',{name:'Retry history',exact:true}).click({timeout:30000});
+  await historyError.waitFor({state:'hidden',timeout:30000});
+  await page.getByText('Owner Added',{exact:true}).first().waitFor();
+  await page.unroute('http://127.0.0.1:8545',historyRpc);
+  await server.provider.request({method:'miner_start',params:[1]});
+  await page.locator('nav').getByRole('button',{name:'Overview',exact:false}).click();
+  await page.getByRole('heading',{name:'Add test funds'}).waitFor();
+  console.log('PASS: read-only Activity survives slow RPCs and block refreshes; errors preserve events and retry successfully.');
+  await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).click();
   // Connecting reloads the treasury view, which remounts the deposit form with its 0.1 default.
   // "Review deposit" is already visible read-only, so wait for the connected owner view instead.
   await page.locator('.account-area .role').filter({ hasText: 'Owner' }).waitFor({ timeout: 25000 }); await page.getByRole('button', { name: 'Review deposit' }).waitFor();
