@@ -1,5 +1,8 @@
 # Milestone 4 developer validation
 
+For the current integration commands and draft final guides, see
+[DEVELOPER_GUIDE.md](DEVELOPER_GUIDE.md). The records below describe historical M4 work.
+
 Checked locally on 2026-11-02, Windows, Node.js 24.14.1 and npm 11.11.0.
 This record replaces the inherited M3 validation claims for this checkpoint.
 It records focused development checks, not the Milestone 5 integration results report.

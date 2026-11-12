@@ -5,6 +5,20 @@ import {setup,sent,artifact,E} from './helpers/fixture.mjs';
 import {createWalletService} from '../src/services/walletService.js';
 import {createWalletService as mock,MOCK_WALLET,MOCK_ACCOUNTS} from '../src/services/mockWalletService.js';
 
+test('blocked browser storage preserves confirmed wallet creation and in-memory discovery',async()=>{
+ const f=await setup();try{
+  const factory=await f.deploy('TreasuryFactory');
+  const api=createWalletService({provider:f.provider,ethereum:walletAdapter(f),chainId:1337,factory:factory.target,
+   storage:{getItem(){throw Error('Storage denied');},setItem(){throw Error('Quota exceeded');}}});
+  await api.connect();let submitted;
+  const result=await api.createWallet(f.config,{onSubmitted:hash=>{submitted=hash;}});
+  assert.equal(result.txHash,submitted);assert.equal((await f.provider.getTransactionReceipt(result.txHash)).status,1);
+  assert.deepEqual(await api.listWallets(null),[result.wallet]);
+  assert.equal((await api.snapshot(result.wallet)).balance,0n);
+  api.addKnownWallet(f.wallet.target);assert.ok((await api.listWallets(null)).includes(f.wallet.target));
+ }finally{f.provider.destroy();await f.rpc.disconnect();}
+});
+
 function walletAdapter(f){let index=0,wrong=false,reject=false;const callbacks={};return {on:(e,cb)=>{(callbacks[e]??=new Set()).add(cb);},removeListener:(e,cb)=>callbacks[e]?.delete(cb),setAccount(i){index=i;callbacks.accountsChanged?.forEach(cb=>cb([f.accounts[i]]));},setWrong(v){wrong=v;callbacks.chainChanged?.forEach(cb=>cb(v?'0x1':'0x539'));},reject(v){reject=v;},async request({method,params=[]}){if(method==='eth_requestAccounts'||method==='eth_accounts')return [f.accounts[index]];if(method==='eth_chainId'&&wrong)return '0x1';if(method==='eth_sendTransaction'&&reject)throw Object.assign(Error('Rejected'),{code:4001});return f.rpc.request({method,params});}};}
 
 test('real service integrates creation, deposits, previews, approvals, execution, history and account changes',async()=>{

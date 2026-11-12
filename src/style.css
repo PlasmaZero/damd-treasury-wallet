@@ -4,3 +4,5 @@
 
 .badge.invalidated { background: #fff0d4; color: #805100; }
 .notice.warning { border-left: 4px solid #a86900; background: #fff7e6; color: #624300; }
+.field .field-error { color: #943d29; overflow-wrap: anywhere; }
+.field [aria-invalid="true"] { border-color: #b84b34; }

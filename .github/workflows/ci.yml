@@ -8,7 +8,8 @@ permissions:
   contents: read
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    # Match the pinned Playwright release; ubuntu-latest can move to unsupported OS versions.
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
@@ -17,9 +18,14 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
-      - run: git diff --exit-code -- src/contract/abi
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
+      - run: npm run test:integration
+      - run: git diff --exit-code -- src/contract/abi
+      - name: Preserve integration reports, logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-results-${{ github.job }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 30

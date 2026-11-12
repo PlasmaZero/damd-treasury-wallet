@@ -19,7 +19,8 @@
     "test": "npm run compile && node --test --test-concurrency=1 test/*.test.mjs",
     "lint": "eslint .",
     "check": "npm run lint && npm test && npm run build",
-    "test:browser": "node scripts/browser-test.mjs"
+    "test:browser": "node scripts/browser-test.mjs",
+    "test:integration": "node scripts/test-integration.mjs"
   },
   "dependencies": {
     "ethers": "6.17.0",

@@ -17,7 +17,9 @@ export function createWalletService(config) {
   let rpcChain=null;
   let account=null, session=0;
   const listeners=new Set();
-  const storage=config.storage??globalThis.localStorage;
+  let storage=config.storage;
+  // Browser privacy settings can throw even when accessing localStorage itself.
+  if(storage==null) {try {storage=globalThis.localStorage;} catch {/* retain wallets in memory */}}
   const key=`damd:${config.chainId}:wallets`;
   let known=[]; try {known=JSON.parse(storage?.getItem(key)??'[]').map(getAddress);} catch {known=[];}
   const iface=new Interface(treasuryAbi);
@@ -133,7 +135,12 @@ export function createWalletService(config) {
       return output;
     } catch(e) {throw toTxError(e,method==='createWallet'?factoryInterface:iface);}
   }
-  function addKnownWallet(a) {a=getAddress(a);if(!known.includes(a)) known.push(a);storage?.setItem(key,JSON.stringify(known));}
+  function addKnownWallet(a) {
+    a=getAddress(a);if(!known.includes(a)) known.push(a);
+    // Persistence is optional. A quota/privacy error must not turn a mined
+    // createWallet transaction into an apparent failure (or block app setup).
+    try {storage?.setItem(key,JSON.stringify(known));} catch {/* in-memory list remains usable */}
+  }
   function subscribe(wallet,cb) {
     let timer,stopped=false;
     const invalidate=()=>{clearTimeout(timer);timer=setTimeout(()=>{if(!stopped)cb();},150);};

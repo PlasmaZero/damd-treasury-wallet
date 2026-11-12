@@ -4,7 +4,17 @@ A complete **local test-fund MVP** for the DAMD shared treasury project: React +
 ethers.js + MetaMask, backed by immutable Solidity contracts. This replaces the
 Milestone 2 deposit-only prototype. It is not audited and must not hold real funds.
 
-## Milestone 4 checkpoint
+## Milestone 5: testing and integration
+
+See the draft [user guide](docs/USER_GUIDE.md) and
+[developer guide](docs/DEVELOPER_GUIDE.md).
+Run `npm run test:integration` for lint, compilation, all Node tests and the
+production-build browser walkthrough. Reports, individual results, logs,
+screenshots and a trace are written to `test-results/` and preserved by CI.
+Real MetaMask acceptance remains a separate manual check; automated browser
+tests use a local wallet adapter.
+
+## Milestone 4 checkpoint (historical)
 
 This package completes the local feature implementation and documents the test plan.
 See [M4 changes and scope](docs/MILESTONE4.md) and the [full test plan](docs/TEST_PLAN.md).
