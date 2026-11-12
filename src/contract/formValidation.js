@@ -65,6 +65,7 @@ export function governanceFormState(config,action,values,walletAddress) {
     if(action==='RemoveOwner'||action==='RemoveGuardian') {
       const owner=action==='RemoveOwner',field=owner?'owner':'guardian',members=owner?config.owners:config.guardians,n=owner?config.threshold:config.guardianThreshold;
       if(!has(members,params[field]))errors[field]=`Choose a current ${field} to remove.`;
+      else if(members.length===1)errors[field]=`Cannot remove the last ${field}. At least one ${field} must remain.`;
       else if(members.length-1<n)errors[field]=`Cannot remove this ${field}: ${members.length-1} remaining ${field}s would be below the threshold (${n}). Lower the threshold first.`;
     }
     if(!Object.keys(errors).length) {

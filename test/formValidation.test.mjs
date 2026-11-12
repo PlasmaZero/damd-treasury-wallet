@@ -54,6 +54,11 @@ test('governance prevents removal below quorum and rejects absent or conflicting
   const full=walletFormState(values(20,20)).config;
   assert.equal(governanceFormState(full,'AddOwner',{owner:address(999)}).valid,false);
   assert.equal(governanceFormState(full,'AddGuardian',{guardian:address(999)}).valid,false);
+  const single=walletFormState(values(1,1)).config;
+  for(const [action,field,member]of [['RemoveOwner','owner',single.owners[0]],['RemoveGuardian','guardian',single.guardians[0]]]) {
+    const result=governanceFormState(single,action,{[field]:member});
+    assert.equal(result.valid,false);assert.match(result.errors[field],/Cannot remove the last/);
+  }
   assert.deepEqual(c,before);
 });
 
