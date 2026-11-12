@@ -31,6 +31,11 @@ or requiring every member to remain accessible. Review the simulation, choose
 **Confirm in MetaMask**, and sign. Wait for **Transaction confirmed** and record
 the new treasury address.
 
+Inline errors show the current owner/guardian counts and block review when a
+threshold is invalid. Use whole numbers from 1 to the corresponding member count.
+Governance also blocks a member removal that would leave fewer members than its
+threshold; lower the threshold through an executed proposal first.
+
 Anyone can deposit using **Overview → Add test funds → Review deposit**. Review
 the amount and selected treasury, confirm in MetaMask, and wait for the balance
 to update. Deposits do not use the outgoing payment allowance.

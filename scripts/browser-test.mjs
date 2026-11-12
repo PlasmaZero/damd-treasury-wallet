@@ -56,8 +56,30 @@ try {
   await page.getByRole('button',{name:'Refresh',exact:true}).click();
   await page.getByText('Syncing.',{exact:true}).waitFor({state:'hidden',timeout:45000});
   console.log('PASS: account changes invalidate an open transaction review.');
+  const validationNav=async name=>page.locator('nav').getByRole('button',{name,exact:false}).click();
+  await validationNav('Governance');
+  for(const [action,label,bad,good,group]of [['SetThreshold','Threshold','6','5','owners'],['SetGuardianThreshold','Guardian Threshold','4','3','guardians']]) {
+    await page.getByLabel('Action',{exact:true}).selectOption(action);
+    const input=page.getByLabel(label,{exact:true}),review=page.getByRole('button',{name:'Review governance proposal',exact:true});
+    await input.fill(bad);await page.getByRole('alert').filter({hasText:`cannot exceed the number of ${group}`}).waitFor();
+    for(const value of [bad,'0','-1','1.5','1e0','']) {
+      await input.fill(value);assert.equal(await input.getAttribute('aria-invalid'),'true');assert.equal(await review.isDisabled(),true);
+    }
+    await input.fill(good);assert.equal(await review.isEnabled(),true);
+  }
+  await page.getByLabel('Action',{exact:true}).selectOption('AddOwner');
+  for(const value of [accounts[0],'0x0000000000000000000000000000000000000000',`${accounts[9]},${accounts[10]}`]) {
+    await page.getByLabel('Owner',{exact:true}).fill(value);
+    assert.equal(await page.getByRole('button',{name:'Review governance proposal',exact:true}).isDisabled(),true);
+  }
+  await validationNav('Overview');
+  console.log('PASS: governance threshold boundaries, malformed numbers, duplicate/zero/multiple addresses are blocked before review.');
   await page.getByLabel('Deposit amount (ETH)').fill('1'); await page.getByRole('button', { name: 'Review deposit' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); await page.locator('.stat.hero').filter({ hasText: '1.0 ETH' }).waitFor({ timeout: 25000 });
-  await page.getByRole('button', { name: 'Proposals', exact: false }).first().click(); await page.getByLabel('Recipient address', { exact: true }).fill(accounts[9]); await page.getByLabel('Amount (ETH)', { exact: true }).fill('0.1'); await page.getByRole('button', { name: 'Review payment proposal' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('PROPOSAL #0', { exact: false }).waitFor({ timeout: 25000 });
+  await page.getByRole('button', { name: 'Proposals', exact: false }).first().click();
+  await page.getByLabel('Recipient address',{exact:true}).fill(`${accounts[9]},${accounts[10]}`);
+  await page.getByRole('button',{name:'Review payment proposal',exact:true}).click();
+  await page.getByRole('alert').filter({hasText:'Enter exactly one recipient address.'}).waitFor();assert.equal(await page.getByRole('dialog').count(),0);
+  await page.getByLabel('Recipient address', { exact: true }).fill(accounts[9]); await page.getByLabel('Amount (ETH)', { exact: true }).fill('0.1'); await page.getByRole('button', { name: 'Review payment proposal' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('PROPOSAL #0', { exact: false }).waitFor({ timeout: 25000 });
   const proposal = page.locator('article').filter({ hasText: 'PROPOSAL #0' });
   for (const index of [1, 2]) { await page.evaluate(i => window.__setTestAccount(i), index); await proposal.getByRole('button', { name: 'Approve', exact: true }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); }
   await proposal.getByText('3/3 approvals', { exact: true }).waitFor();
@@ -91,13 +113,38 @@ try {
   await nav('Create wallet');
   await page.getByLabel('Owners',{exact:true}).fill(accounts.slice(0,3).join(', '));
   await page.getByLabel('Guardians',{exact:true}).fill(accounts.slice(5,7).join(', '));
+  const createReview=page.getByRole('button',{name:'Review wallet creation',exact:true});
+  for(const bad of ['4','0','-1','1.5','1e0','']) {
+    await page.getByLabel('Owner threshold',{exact:true}).fill(bad);assert.equal(await createReview.isDisabled(),true);
+    assert.equal(await page.getByLabel('Owner threshold',{exact:true}).getAttribute('aria-invalid'),'true');
+  }
+  await page.getByLabel('Owner threshold',{exact:true}).fill('4');
+  await page.getByLabel('Guardian threshold',{exact:true}).fill('3');
+  await page.getByRole('alert').filter({hasText:'Owner threshold cannot exceed the number of owners (3).'}).waitFor();
+  await page.getByRole('alert').filter({hasText:'Guardian threshold cannot exceed the number of guardians (2).'}).waitFor();
+  fs.mkdirSync('test-results',{recursive:true});await page.screenshot({path:'test-results/validation.png',fullPage:true});
+  await page.setViewportSize({width:390,height:844});await page.screenshot({path:'test-results/validation-mobile.png',fullPage:true});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'Validation errors overflow on mobile');
+  await page.setViewportSize({width:1440,height:1100});
+  await page.getByLabel('Owner threshold',{exact:true}).fill('3');
+  for(const bad of ['3','0','-1','1.5','1e0','']) {
+    await page.getByLabel('Guardian threshold',{exact:true}).fill(bad);assert.equal(await createReview.isDisabled(),true);
+  }
+  await page.getByLabel('Guardian threshold',{exact:true}).fill('2');assert.equal(await createReview.isEnabled(),true);
+  await page.getByLabel('Owners',{exact:true}).fill(`${accounts[0]},${accounts[0]},${accounts[2]}`);assert.equal(await createReview.isDisabled(),true);
+  await page.getByLabel('Owners',{exact:true}).fill(accounts.slice(0,3).join(', '));assert.equal(await createReview.isEnabled(),true);
+  console.log('PASS: creation validates owner/guardian threshold boundaries, invalid numbers, duplicate members and mobile error layout.');
   await page.getByLabel('Owner threshold',{exact:true}).fill('1');
   await page.getByText('One owner can authorize payments and governance changes.',{exact:false}).waitFor();
   await page.getByLabel('Owner threshold',{exact:true}).fill('2');
   await page.getByRole('button',{name:'Review wallet creation',exact:true}).click();await confirm();
   await page.getByRole('heading',{name:'Add test funds'}).waitFor();
   const secondWallet=await page.getByLabel('Treasury wallet',{exact:true}).inputValue();assert.notEqual(secondWallet,originalWallet);console.log('PASS: browser independent wallet creation and threshold warning.');
-  await nav('Governance');await page.getByLabel('Action',{exact:true}).selectOption('RemoveOwner');
+  await nav('Governance');await page.getByLabel('Action',{exact:true}).selectOption('RemoveGuardian');
+  await page.getByLabel('Guardian',{exact:true}).fill(accounts[5]);
+  await page.getByRole('alert').filter({hasText:'Lower the threshold first.'}).waitFor();
+  assert.equal(await page.getByRole('button',{name:'Review governance proposal',exact:true}).isDisabled(),true);
+  await page.getByLabel('Action',{exact:true}).selectOption('RemoveOwner');
   await page.getByLabel('Owner',{exact:true}).fill(accounts[2]);
   await page.getByText('Other owners cannot reach the recovery cancellation threshold',{exact:false}).waitFor();
   await nav('Overview');

@@ -55,9 +55,7 @@ one confirmation. Account/network changes invalidate open reviews. Read models
 derive Ready and Invalidated without adding contract enum values.
 
 The factory's `walletsOf` index records **creation-time** membership. App discovery
-scans factory creation events and checks current treasury membership. Deployment
-verification checks original members from the creation receipt, so later valid
-governance or recovery changes do not fail publication.
+scans factory creation events and checks current treasury membership.
 
 ## Checks and reproducible evidence
 
@@ -126,11 +124,9 @@ publication is required, set `ETHERSCAN_API_KEY` privately and run
 `npm run verify:etherscan`. A failure to publish source is not a reason to send
 another deployment transaction.
 
-The Pages workflow first calls the full reusable integration workflow. Only
-after it passes does the build verify the committed Sepolia records, chain ID,
-runtime bytecode, factory block, wallet provenance and original member index.
-Etherscan source is also checked when its API key is configured. It then builds
-with chain 11155111 and the repository base path and publishes Pages.
+The existing Pages workflow verifies the Sepolia deployment record, builds with
+chain 11155111 and the repository base path, then publishes Pages. Deployment
+scripts, verification, configuration and records are unchanged by these fixes.
 
 `VITE_*` settings are public in the bundle. A custom frontend RPC must permit
 the Pages origin and should use appropriate origin restrictions. Deployment and
@@ -141,7 +137,7 @@ in [DEMO.md](DEMO.md), saving actual transaction links and outcomes. Include
 connection/signature rejection, switching accounts during review and reconnecting
 after an RPC interruption; those extension/network interactions are not proved
 by the local wallet adapter.
-For a frontend regression, revert the offending code commit and let the same
-gates rebuild the previous working frontend. An immutable contract cannot be
+For a frontend regression, revert the offending code commit and rebuild the
+previous working frontend. An immutable contract cannot be
 rolled back; do not overwrite manifests with guessed addresses or claim that
 reverting frontend code reverses transactions.

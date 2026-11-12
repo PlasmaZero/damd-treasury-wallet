@@ -7,7 +7,7 @@ import {spawn, spawnSync} from 'node:child_process';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const output = path.join(root, 'test-results');
 fs.mkdirSync(output, {recursive: true});
-for (const file of ['integration-results.json', 'integration-results.md', 'node-tests.xml', 'desktop.png', 'mobile.png', 'failure.png', 'browser-trace.zip'])
+for (const file of ['integration-results.json', 'integration-results.md', 'node-tests.xml', 'desktop.png', 'mobile.png', 'validation.png', 'validation-mobile.png', 'failure.png', 'browser-trace.zip'])
   fs.rmSync(path.join(output, file), {force: true});
 const git = args => {
   const result = spawnSync('git', args, {cwd: root, encoding: 'utf8'});

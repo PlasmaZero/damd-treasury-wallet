@@ -11,9 +11,8 @@ See the draft [user guide](docs/USER_GUIDE.md) and
 Run `npm run test:integration` for lint, compilation, all Node tests and the
 production-build browser walkthrough. Reports, individual results, logs,
 screenshots and a trace are written to `test-results/` and preserved by CI.
-GitHub Pages now waits for the same integration checks before verifying and
-publishing the Sepolia build. Real MetaMask acceptance remains a separate manual
-check; automated browser tests use a local wallet adapter.
+Real MetaMask acceptance remains a separate manual check; automated browser
+tests use a local wallet adapter.
 
 ## Milestone 4 checkpoint (historical)
 
