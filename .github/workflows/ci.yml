@@ -4,6 +4,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -17,9 +18,14 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
-      - run: git diff --exit-code -- src/contract/abi
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:browser
+      - run: npm run test:integration
+      - run: git diff --exit-code -- src/contract/abi
+      - name: Preserve integration reports, logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-results-${{ github.job }}
+          path: test-results/
+          if-no-files-found: warn
+          retention-days: 30

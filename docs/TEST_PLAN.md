@@ -86,7 +86,12 @@ for comparison. Do not reuse these public development keys outside the local cha
     `npm run deploy`, reload the app, and reset MetaMask local account activity if needed.
     Previously recorded addresses/manifests must not be treated as persistent deployment proof.
 
-## Milestone 5 integration campaign: planned, not completed
+## Milestone 5 integration campaign (original plan)
+
+The [developer guide](DEVELOPER_GUIDE.md#checks-and-reproducible-evidence) describes
+the current automated campaign and saved test evidence. The original campaign
+below is retained to show its intended scope; it must not be read as a claim that
+all manual checks passed.
 
 - Complete real MetaMask tests with fresh profiles, denied site permissions, account changes
   while reviewing/signing, wrong networks, dropped RPC connections and reconnects. Change

@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from "node:util";
 import { JsonRpcProvider, Contract, getAddress } from "ethers";
 import { compile, root } from "./compile.mjs";
 import { getPublishedSource } from "./lib/explorer.mjs";
+import { verifyFactoryWallet } from "./lib/deployment-members.mjs";
 
 if (fs.existsSync(path.join(root, ".env")))
   process.loadEnvFile(path.join(root, ".env"));
@@ -158,30 +159,11 @@ async function verify() {
     factoryOk
   ) {
     const wallet = new Contract(d.demoWallet, artifacts.Treasury.abi, provider);
-    await check("demo wallet was created by the recorded factory", async () => {
-      const block = Number(await wallet.deployedAtBlock());
-      const logs = await factory.queryFilter(
-        factory.filters.WalletCreated(d.demoWallet),
-        block,
-        block,
-      );
-      if (!logs.length)
-        throw new Error(
-          `no WalletCreated event for it from ${d.factory} in block ${block}`,
-        );
-      return `block ${block}`;
+    await check("factory records the demo wallet and its creation-time members", async () => {
+      const {block, members} = await verifyFactoryWallet(provider, factory, wallet);
+      return `block ${block}, ${members.length} original members`;
     });
     const config = await wallet.getConfig();
-    await check(
-      "factory lists the demo wallet for every owner and guardian",
-      async () => {
-        const members = [...config.owners, ...config.guardians];
-        for (const a of members)
-          if (!(await factory.walletsOf(a)).includes(d.demoWallet))
-            throw new Error(`walletsOf(${a}) does not include it`);
-        return `${members.length} members`;
-      },
-    );
     // A mismatch is a warning: governance or recovery may have changed the wallet since deploy.
     if (fs.existsSync(path.join(root, configFile))) {
       const expected = readJson(configFile);
@@ -239,8 +221,9 @@ async function verify() {
       });
 }
 
-await verify();
-provider?.destroy();
+try {await verify();}
+catch (error) {failures++; console.error(`FAIL  verification: ${error.shortMessage ?? error.message}`);}
+finally {provider?.destroy();}
 console.log(
   failures
     ? `Deployment verification FAILED: ${failures} check(s) failed.`

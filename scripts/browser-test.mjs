@@ -10,9 +10,11 @@ import ganache from 'ganache';
 import { chromium } from '@playwright/test';
 
 const server = ganache.server({ wallet: { deterministic: true, totalAccounts: 12, defaultBalance: 1000 }, chain: { chainId: 1337, hardfork: 'merge' }, miner: { blockTime: 1 }, logging: { quiet: true } });
-let vite, browser, page; const errors = [];
+let vite, browser, context, page; const errors = [];
+const basePath='/damd-treasury-wallet/';
+const buildEnv={...process.env,BASE_PATH:basePath,VITE_USE_MOCK:'false',VITE_CHAIN_ID:'1337',VITE_RPC_URL:'http://127.0.0.1:8545'};
 const paths = ['deployments/1337.json', 'public/deployments/1337.json']; const originals = paths.map(p => fs.existsSync(p) ? fs.readFileSync(p) : null);
-function run(file, args) { return new Promise((resolve, reject) => { const p = spawn(file, args, { stdio: 'inherit', env: process.env }); p.on('error', reject); p.on('exit', code => code === 0 ? resolve() : reject(Error(`${file} exited ${code}`))); }); }
+function run(file, args, env=process.env) { return new Promise((resolve, reject) => { const p = spawn(file, args, { stdio: 'inherit', env }); p.on('error', reject); p.on('exit', code => code === 0 ? resolve() : reject(Error(`${file} exited ${code}`))); }); }
 async function mineAndRefresh(seconds) {
   await server.provider.request({method:'evm_increaseTime',params:[seconds]});
   await server.provider.request({method:'evm_mine',params:[]});
@@ -22,11 +24,18 @@ async function mineAndRefresh(seconds) {
 try {
   await server.listen(8545, '127.0.0.1'); await run(process.execPath, ['scripts/deploy.mjs']); await run(process.execPath, ['scripts/verify-deployment.mjs']);
   const accounts = Object.keys(server.provider.getInitialAccounts());
-  vite = spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5174'], { env: { ...process.env, VITE_USE_MOCK: 'false', VITE_CHAIN_ID: '1337', VITE_RPC_URL: 'http://127.0.0.1:8545' }, stdio: 'pipe' });
+  // Test the same bundled assets and repository subpath used by GitHub Pages.
+  await run(process.execPath,['node_modules/vite/bin/vite.js','build'],buildEnv);
+  vite = spawn(process.execPath, ['node_modules/vite/bin/vite.js', 'preview', '--host', '127.0.0.1', '--port', '5174', '--strictPort'], { env: buildEnv, stdio: 'pipe' });
   await new Promise((resolve, reject) => { const timeout = setTimeout(() => reject(Error('Vite startup timed out')), 15000); vite.stdout.on('data', d => { if (stripVTControlCharacters(d.toString()).includes('127.0.0.1:5174')) { clearTimeout(timeout); resolve(); } }); vite.on('error', reject); });
-  browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] }); page = await browser.newPage({ viewport: { width: 1440, height: 1100 } });
+  browser = await chromium.launch({ headless: true, args: ['--no-sandbox'], ...(process.env.PLAYWRIGHT_EXECUTABLE_PATH?{executablePath:process.env.PLAYWRIGHT_EXECUTABLE_PATH}:{}) });
+  console.log(`Browser: Chromium ${browser.version()}; production base path ${basePath}`);
+  context=await browser.newContext({viewport:{width:1440,height:1100}});
+  await context.tracing.start({screenshots:true,snapshots:true,sources:true});page=await context.newPage();
   page.on('pageerror', e => errors.push(e.message));
   await page.addInitScript(({ accounts }) => {
+    // The full UI must remain usable when a browser denies access to storage.
+    Object.defineProperty(window,'localStorage',{configurable:true,get(){throw new DOMException('Blocked for integration test','SecurityError');}});
     let selected = accounts[0]; const callbacks = {}; window.__setTestAccount = i => { selected = accounts[i]; for (const cb of callbacks.accountsChanged ?? []) cb([selected]); };
     window.ethereum = {
       on: (event, cb) => { (callbacks[event] ??= []).push(cb); }, removeListener: (event, cb) => { callbacks[event] = (callbacks[event] ?? []).filter(f => f !== cb); }, request: async ({ method, params = [] }) => {
@@ -36,10 +45,17 @@ try {
       }
     };
   }, { accounts });
-  await page.goto('http://127.0.0.1:5174'); await page.getByRole('heading', { name: 'Add test funds' }).waitFor(); await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).click();
+  await page.goto(`http://127.0.0.1:5174${basePath}`); await page.getByRole('heading', { name: 'Add test funds' }).waitFor(); await page.getByRole('button', { name: 'Connect MetaMask', exact: true }).click();
   // Connecting reloads the treasury view, which remounts the deposit form with its 0.1 default.
   // "Review deposit" is already visible read-only, so wait for the connected owner view instead.
   await page.locator('.account-area .role').filter({ hasText: 'Owner' }).waitFor({ timeout: 25000 }); await page.getByRole('button', { name: 'Review deposit' }).waitFor();
+  await page.getByRole('button',{name:'Review deposit',exact:true}).click();
+  await page.getByRole('dialog').waitFor();await page.evaluate(()=>window.__setTestAccount(1));
+  await page.getByRole('dialog').waitFor({state:'hidden'});
+  await page.evaluate(()=>window.__setTestAccount(0));
+  await page.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.getByText('Syncing.',{exact:true}).waitFor({state:'hidden',timeout:45000});
+  console.log('PASS: account changes invalidate an open transaction review.');
   await page.getByLabel('Deposit amount (ETH)').fill('1'); await page.getByRole('button', { name: 'Review deposit' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('Transaction confirmed.', { exact: true }).waitFor({ timeout: 25000 }); await page.locator('.stat.hero').filter({ hasText: '1.0 ETH' }).waitFor({ timeout: 25000 });
   await page.getByRole('button', { name: 'Proposals', exact: false }).first().click(); await page.getByLabel('Recipient address', { exact: true }).fill(accounts[9]); await page.getByLabel('Amount (ETH)', { exact: true }).fill('0.1'); await page.getByRole('button', { name: 'Review payment proposal' }).click(); await page.getByRole('button', { name: 'Confirm in MetaMask' }).click(); await page.getByText('PROPOSAL #0', { exact: false }).waitFor({ timeout: 25000 });
   const proposal = page.locator('article').filter({ hasText: 'PROPOSAL #0' });
@@ -143,7 +159,16 @@ try {
 } catch (error) {
   console.error('Browser errors:', errors); if (page) { fs.mkdirSync('test-results', { recursive: true }); await page.screenshot({ path: 'test-results/failure.png', fullPage: true }); console.error((await page.locator('body').innerText()).slice(0, 6000)); } throw error;
 } finally {
-  await browser?.close(); if (vite) { vite.kill(); await once(vite, 'exit').catch(() => { }); } await server.close();
-  paths.forEach((p, i) => { if (originals[i]) fs.writeFileSync(p, originals[i]); else fs.rmSync(p, { force: true }); });
+  try {
+    try {
+      if(context){fs.mkdirSync('test-results',{recursive:true});await context.tracing.stop({path:'test-results/browser-trace.zip'});}
+    } finally {
+      await browser?.close();
+      if (vite&&vite.exitCode===null&&vite.signalCode===null) { vite.kill(); await once(vite, 'exit').catch(() => { }); }
+      await server.close();
+    }
+  } finally {
+    paths.forEach((p, i) => { if (originals[i]) fs.writeFileSync(p, originals[i]); else fs.rmSync(p, { force: true }); });
+  }
 }
 
