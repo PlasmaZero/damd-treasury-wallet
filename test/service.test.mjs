@@ -5,6 +5,18 @@ import {setup,sent,artifact,E} from './helpers/fixture.mjs';
 import {createWalletService} from '../src/services/walletService.js';
 import {createWalletService as mock,MOCK_WALLET,MOCK_ACCOUNTS} from '../src/services/mockWalletService.js';
 
+test('read-only history includes constructor events before any wallet connection',async()=>{
+ const f=await setup();try{
+  const api=createWalletService({provider:f.provider,chainId:1337,storage:{getItem:()=>null,setItem:()=>{}}});
+  const history=await api.getHistory(f.wallet.target);
+  assert.equal(api.getAccount(),null);
+  for(const name of ['OwnerAdded','GuardianAdded','ThresholdChanged','GuardianThresholdChanged','LimitsChanged','DelaysChanged','Deposited'])
+   assert.ok(history.some(e=>e.event===name),`Missing ${name} in unconnected activity`);
+  assert.equal(history.filter(e=>e.event==='OwnerAdded').length,f.config.owners.length);
+  assert.equal(history.filter(e=>e.event==='GuardianAdded').length,f.config.guardians.length);
+ }finally{f.provider.destroy();await f.rpc.disconnect();}
+});
+
 test('blocked browser storage preserves confirmed wallet creation and in-memory discovery',async()=>{
  const f=await setup();try{
   const factory=await f.deploy('TreasuryFactory');

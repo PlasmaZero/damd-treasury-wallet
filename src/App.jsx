@@ -1,5 +1,6 @@
 import {useCallback,useEffect,useRef,useState,useId,cloneElement} from 'react';
 import {createWalletService,MOCK_WALLET,MOCK_ACCOUNTS} from './services/index.js';
+import {createHistoryLoader} from './services/historyLoader.js';
 import {ACTION_NAMES,FIELDS,eth,short,parseSingleAddress,parseAmount,describeAction} from './contract/params.js';
 import {walletFormState,governanceFormState} from './contract/formValidation.js';
 
@@ -27,11 +28,11 @@ function ActionButton({children,reason,busy,onClick}) {return <span className="a
 export default function App() {
   const [service,setService]=useState(null),[setupError,setSetupError]=useState(''),[retry,setRetry]=useState(0);
   const [account,setAccount]=useState(null),[wallet,setWallet]=useState(''),[wallets,setWallets]=useState([]);
-  const [snap,setSnap]=useState(null),[proposals,setProposals]=useState([]),[recoveries,setRecoveries]=useState([]),[history,setHistory]=useState([]);
+  const [snap,setSnap]=useState(null),[proposals,setProposals]=useState([]),[recoveries,setRecoveries]=useState([]),[history,setHistory]=useState({items:[],loading:true,error:''});
   const [tab,setTab]=useState('Overview'),[error,setError]=useState(''),[loading,setLoading]=useState(false),[busy,setBusy]=useState(false);
   const [status,setStatus]=useState(null),[review,setReview]=useState(null),[manual,setManual]=useState('');
   const [page,setPage]=useState(0),[recoveryPage,setRecoveryPage]=useState(0);
-  const generation=useRef(0),loadingRef=useRef(false),reloadRef=useRef(false);
+  const generation=useRef(0),loadingRef=useRef(false),reloadRef=useRef(false),historyRefresh=useRef(null);
   useEffect(()=>{let live=true;
     (async()=>{
       try {
@@ -47,7 +48,7 @@ export default function App() {
     })(); return ()=>{live=false;};
   },[retry]);
   useEffect(()=>{if(!service)return;return service.onAccountOrChainChange(()=>{generation.current++;setAccount(service.getAccount());setReview(null);setSnap(null);setProposals([]);setRecoveries([]);});},[service]);
-  useEffect(()=>{generation.current++;setSnap(null);setProposals([]);setRecoveries([]);setHistory([]);setReview(null);},[wallet,account]);
+  useEffect(()=>{generation.current++;setSnap(null);setProposals([]);setRecoveries([]);setReview(null);},[wallet,account]);
   // Membership only changes through transactions, so rescan the factory after a confirmed one
   // rather than on every block (the scan reads the factory's whole log history).
   const confirmedTx=status?.state==='success'?status.hash:null;
@@ -66,7 +67,15 @@ export default function App() {
   },[service,wallet,page,recoveryPage]);
   useEffect(()=>{refresh();if(!service||!wallet)return;return service.subscribe(wallet,refresh);},[service,wallet,account,refresh]);
   useEffect(()=>{const timer=setInterval(()=>{if(reloadRef.current&&!loadingRef.current){reloadRef.current=false;refresh();}},300);return()=>clearInterval(timer);},[refresh]);
-  useEffect(()=>{if(!service||!wallet||tab!=='Activity')return;let current=true;service.getHistory(wallet).then(h=>{if(current)setHistory(h);}).catch(e=>{if(current)setError(e.message);});return()=>{current=false;};},[service,wallet,tab,snap?.blockNumber]);
+  useEffect(()=>{
+    if(!service||!wallet||tab!=='Activity')return;
+    setHistory({items:[],loading:true,error:''});
+    const loader=createHistoryLoader(()=>service.getHistory(wallet),setHistory);
+    historyRefresh.current=loader.refresh;
+    const unsubscribe=service.subscribe(wallet,loader.refresh);
+    void loader.refresh();
+    return()=>{loader.dispose();unsubscribe();historyRefresh.current=null;};
+  },[service,wallet,tab]);
   async function connect(){try{setBusy(true);setError('');setAccount(await service.connect());}catch(e){setError(e.message);}finally{setBusy(false);}}
   async function prepare(method,args,summary){
     const token=generation.current;setBusy(true);setError('');
@@ -95,7 +104,7 @@ export default function App() {
       <header className="topbar"><span>TEAM DAMD <span className="slash">/</span> Treasury workspace</span><div className="account-area"><span className="role">{role}</span>{account&&<span title={account}>{short(account)}</span>}<button className="primary" onClick={connect} disabled={!service||busy}>{account?'Reconnect wallet':'Connect MetaMask'}</button></div></header>
       <div className="content"><div className="page-heading"><div className="eyebrow">CONTROL TOGETHER</div><h1>{tab}</h1><p>{({Overview:'A clear view of your funds and the rules that protect them.',Proposals:'Review shared decisions. Approve, wait, then execute.',Governance:'Change wallet rules through the same approval process.',Recovery:'Replace a lost owner address with guardian approval.',Activity:'An on-chain record of your treasury’s actions.','Create wallet':'Set the members and rules for a new shared treasury.'})[tab]}</p></div>
       {setupError&&<Notice type="error"><strong>Setup required</strong><p>{setupError}</p>{CHAIN===1337&&<><code>npm run chain</code><p>In another terminal: <code>npm run deploy</code></p></>}<button onClick={()=>setRetry(x=>x+1)}>Retry setup</button></Notice>}
-      {service?.mock&&<Notice><strong>SIMULATED DATA — no blockchain transactions</strong><div className="button-row"><select aria-label="Mock account" value={account??''} onChange={e=>service.mock.setAccount(e.target.value)}><option value="" disabled>Select a demo role</option>{MOCK_ACCOUNTS.map(a=><option key={a.address} value={a.address}>{a.name}</option>)}</select><button onClick={()=>service.mock.advanceTime(60)}>Advance 60 seconds</button></div></Notice>}{service&&<div className="wallet-bar"><Field label="Treasury wallet"><select value={wallet} onChange={e=>{setWallet(e.target.value);setPage(0);setRecoveryPage(0);}}><option value="">Select a wallet</option>{wallets.map(w=><option key={w} value={w}>{short(w)}{same(w,wallet)?' · selected':''}</option>)}</select></Field><form className="inline-form" onSubmit={e=>{e.preventDefault();try{service.addKnownWallet(manual);setWallet(manual);setManual('');setPage(0);setRecoveryPage(0);}catch{setError('Enter a valid Ethereum wallet contract address.');}}}><Field label="Add wallet by address"><input aria-label="Wallet contract address" value={manual} placeholder="0x…" onChange={e=>setManual(e.target.value)} required/></Field><button type="submit">Add</button></form><button onClick={refresh} disabled={loading||!wallet}>{loading?'Syncing…':'Refresh'}</button></div>}
+      {service?.mock&&<Notice><strong>SIMULATED DATA — no blockchain transactions</strong><div className="button-row"><select aria-label="Mock account" value={account??''} onChange={e=>service.mock.setAccount(e.target.value)}><option value="" disabled>Select a demo role</option>{MOCK_ACCOUNTS.map(a=><option key={a.address} value={a.address}>{a.name}</option>)}</select><button onClick={()=>service.mock.advanceTime(60)}>Advance 60 seconds</button></div></Notice>}{service&&<div className="wallet-bar"><Field label="Treasury wallet"><select value={wallet} onChange={e=>{setWallet(e.target.value);setPage(0);setRecoveryPage(0);}}><option value="">Select a wallet</option>{wallets.map(w=><option key={w} value={w}>{short(w)}{same(w,wallet)?' · selected':''}</option>)}</select></Field><form className="inline-form" onSubmit={e=>{e.preventDefault();try{service.addKnownWallet(manual);setWallet(manual);setManual('');setPage(0);setRecoveryPage(0);}catch{setError('Enter a valid Ethereum wallet contract address.');}}}><Field label="Add wallet by address"><input aria-label="Wallet contract address" value={manual} placeholder="0x…" onChange={e=>setManual(e.target.value)} required/></Field><button type="submit">Add</button></form><button onClick={()=>{refresh();historyRefresh.current?.();}} disabled={loading||!wallet}>{loading?'Syncing…':'Refresh'}</button></div>}
       {wallet&&<div className="wallet-address"><Address value={wallet}/>{snap&&<span>Block {snap.blockNumber.toLocaleString()} · {date(snap.chainTime)}</span>}</div>}
       {error&&<Notice type="error">{error}</Notice>}
       {status&&<Notice type={status.state}><div className="notice-row"><strong>{status.text}</strong>{!busy&&<button onClick={()=>setStatus(null)} aria-label="Dismiss transaction status">×</button>}</div>{status.hash&&<TxLink hash={status.hash}/>} {status.details&&<details><summary>Technical detail</summary><pre>{status.details}</pre></details>}</Notice>}
@@ -107,7 +116,7 @@ export default function App() {
       {snap&&tab==='Proposals'&&<><PaymentForm snap={snap} busy={busy} prepare={prepare} onError={setError}/><ProposalList proposals={proposals} snap={snap} busy={busy} prepare={prepare} service={service} wallet={wallet}/><Pager page={page} setPage={setPage} total={snap.proposalCount}/></>}
       {snap&&tab==='Governance'&&<Governance snap={snap} busy={busy||!owner} prepare={prepare} onError={setError}/>}
       {snap&&tab==='Recovery'&&<><RecoveryForm snap={snap} busy={busy||!guardian} prepare={prepare} onError={setError}/>{recoveries.length?recoveries.map(r=><RecoveryCard key={r.id} r={r} snap={snap} busy={busy} prepare={prepare}/>):<div className="empty">No recovery requests yet.</div>}<Pager page={recoveryPage} setPage={setRecoveryPage} total={snap.recoveryCount}/></>}
-      {snap&&tab==='Activity'&&<History items={history}/>}
+      {service&&wallet&&tab==='Activity'&&<History {...history} onRetry={()=>historyRefresh.current?.()}/>}
       <footer>Immutable contracts · ETH only · {CHAIN===1337?'Local chain 1337':'Sepolia chain 11155111'}<span>Course MVP · Not audited for real funds</span></footer>
       </div>
     </main>
@@ -179,5 +188,5 @@ function CreateWallet({busy,prepare,onError}) {
       <button className="primary" disabled={busy||!validation.valid}>Review wallet creation</button>
     </form></section>;
 }
-function History({items}) {return <section className="panel"><h2>Event history</h2>{items.length?<div className="history-list">{items.map(h=><details key={`${h.txHash}:${h.logIndex}`}><summary><span><strong>{human(h.event)}</strong><small>Block {h.blockNumber}</small></span><TxLink hash={h.txHash}/></summary><pre>{json(h.args)}</pre></details>)}</div>:<p>No events loaded yet.</p>}</section>;}
+function History({items,loading=false,error='',onRetry}) {return <section className="panel" aria-busy={loading}><h2>Event history</h2>{loading&&<p role="status">Loading event history…</p>}{error&&<Notice type="error"><strong>Could not load event history.</strong><p>{error}</p>{onRetry&&<button disabled={loading} onClick={onRetry}>Retry history</button>}</Notice>}{items.length?<div className="history-list">{items.map(h=><details key={`${h.txHash}:${h.logIndex}`}><summary><span><strong>{human(h.event)}</strong><small>Block {h.blockNumber}</small></span><TxLink hash={h.txHash}/></summary><pre>{json(h.args)}</pre></details>)}</div>:!loading&&!error&&<p>No events found for this treasury.</p>}</section>;}
 
