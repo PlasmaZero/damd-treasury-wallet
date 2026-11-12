@@ -80,8 +80,10 @@ try {
   await page.getByRole('button',{name:'Refresh',exact:true}).click();
   await page.getByRole('button',{name:'Refresh',exact:true}).waitFor();
   assert.equal(await historyError.isVisible(),true);
+  const retryHistory=page.getByRole('button',{name:'Retry history',exact:true});
+  await retryHistory.click({trial:true,timeout:30000});
   logMode='healthy';
-  await page.getByRole('button',{name:'Retry history',exact:true}).click({timeout:30000});
+  await retryHistory.click({timeout:30000});
   await historyError.waitFor({state:'hidden',timeout:30000});
   await page.getByText('Owner Added',{exact:true}).first().waitFor();
   await page.unroute('http://127.0.0.1:8545',historyRpc);
