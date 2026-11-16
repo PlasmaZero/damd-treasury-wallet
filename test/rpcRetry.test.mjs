@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {isMissingBlockError,withMissingBlockRetry} from '../src/services/rpcRetry.js';
+import {isMissingBlockError,isPrunedHistoryError,withMissingBlockRetry} from '../src/services/rpcRetry.js';
 
 // Shape ethers v6 produces for an unrecognised JSON-RPC error (as seen on the hosted site).
 const missing=()=>Object.assign(new Error('could not coalesce error'),{code:'UNKNOWN_ERROR',error:{code:-32001,message:'block not found: 0xb81c78'}});
@@ -24,5 +24,15 @@ test('other errors and persistent missing blocks are not retried forever',async(
   calls=0;
   const stuck=withMissingBlockRetry({send:async()=>{calls++;throw missing();}},{attempts:3,delayMs:1});
   await assert.rejects(stuck.send('eth_call',[]),e=>isMissingBlockError(e));
+  assert.equal(calls,3);
+});
+
+test('pruned-history errors from a mixed archive/pruned pool are retried',async()=>{
+  const pruned=()=>Object.assign(new Error('could not coalesce error'),{code:'UNKNOWN_ERROR',error:{code:4444,message:'pruned history unavailable'}});
+  assert.ok(isPrunedHistoryError(pruned()));
+  assert.ok(!isPrunedHistoryError(new Error('execution reverted')));
+  let calls=0;
+  const provider=withMissingBlockRetry({send:async m=>{calls++;if(calls<3)throw pruned();return m;}},{delayMs:1});
+  assert.equal(await provider.send('eth_getLogs',[]),'eth_getLogs');
   assert.equal(calls,3);
 });

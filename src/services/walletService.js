@@ -3,10 +3,13 @@ import treasuryAbi from '../contract/abi/Treasury.json' with {type:'json'};
 import factoryAbi from '../contract/abi/TreasuryFactory.json' with {type:'json'};
 import {ACTION_TYPES,STATUS,decodeParams,describeAction,encodeParams,validateConfig} from '../contract/params.js';
 import {toTxError} from '../contract/errors.js';
-import {withMissingBlockRetry} from './rpcRetry.js';
+import {isNodeError,isPrunedHistoryError,withMissingBlockRetry} from './rpcRetry.js';
 
 // Logs this close to the head are rescanned on each incremental scan in case of a reorg.
 const REORG_DEPTH=5;
+const MAX_LOG_RANGE=2000;
+// Extra getLogs attempts per chunk on node errors, on top of provider.send's own retries.
+const NODE_RETRIES=6;
 const CHAINS={1337:{chainName:'DAMD Local'},11155111:{chainName:'Sepolia',blockExplorerUrls:['https://sepolia.etherscan.io']}};
 
 export function createWalletService(config) {
@@ -152,12 +155,24 @@ export function createWalletService(config) {
     globalThis.window?.addEventListener('focus',invalidate); listeners.add(invalidate);
     return ()=>{stopped=true;clearTimeout(timer);clearInterval(heartbeat);provider.off('block',invalidate);listeners.delete(invalidate);globalThis.window?.removeEventListener('focus',invalidate);};
   }
+  // Halve the range on errors that may mean "range too large", and grow it back after a
+  // success so one bad chunk does not leave the rest of the scan crawling. Node errors
+  // (pruned/lagging node in a load-balanced pool) are not about the range: provider.send
+  // already retried them, so retry the same range a few more times instead of shrinking.
   async function scanLogs(filter,start,end) {
-    let size=2000;const result=[];
+    const max=config.maxLogRange??MAX_LOG_RANGE;let size=max,nodeFailures=0;const result=[];
     while(start<=end) {
       const to=Math.min(start+size-1,end);let logs;
-      try{logs=await provider.getLogs({...filter,fromBlock:start,toBlock:to});}catch(error){if(size===1)throw error;size=Math.max(1,Math.floor(size/2));continue;}
-      result.push(...logs);start=to+1;
+      try{logs=await provider.getLogs({...filter,fromBlock:start,toBlock:to});}
+      catch(error){
+        if(isNodeError(error)) {
+          if(++nodeFailures<NODE_RETRIES) {await new Promise(r=>setTimeout(r,config.retryDelayMs??100));continue;}
+          if(isPrunedHistoryError(error)) throw Object.assign(new Error('The RPC node does not keep event logs this old (pruned history). Try again, or set VITE_RPC_URL to an RPC with full log history.'),{code:'PRUNED_HISTORY',cause:error});
+          throw error;
+        }
+        if(size===1)throw error;size=Math.max(1,Math.floor(size/2));continue;
+      }
+      result.push(...logs);start=to+1;nodeFailures=0;size=Math.min(max,size*2);
     }
     return result;
   }
