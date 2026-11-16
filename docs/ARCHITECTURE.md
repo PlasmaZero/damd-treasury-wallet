@@ -1,4 +1,4 @@
-# Architecture and UML — implemented MVP
+# Architecture and UML — Milestone 4
 
 The browser uses a React interface and a WalletService facade. Components request reads,
 previews and writes through the service, which hides ethers.js and provider details.
@@ -7,9 +7,14 @@ The browser never receives private keys. The contract remains authoritative even
 modified frontend hides rules or bypasses client-side validation.
 
 A factory creates independent immutable treasury contracts. Each treasury stores members,
-limits, approvals, proposals and recovery state. Events supply transaction history and
-invalidate the UI's cached reads. State is always reread from the chain rather than rebuilt
-solely from events. Browser local storage contains manually added wallet addresses only.
+limits, approvals, proposals and recovery state. New blocks, window focus, account/chain
+changes and a slow heartbeat invalidate the UI's cached reads; state is then reread from
+the chain at one block rather than rebuilt from events. Events supply transaction history
+and wallet discovery only. Browser local storage holds wallet addresses only (created,
+manually added, or the deployment's demo wallet), keyed per chain.
+
+The same build targets a local Ganache chain (chain ID 1337) and Sepolia (11155111). The
+Sepolia frontend is published to GitHub Pages; contracts are deployed manually.
 
 ```mermaid
 flowchart TD
@@ -22,28 +27,41 @@ flowchart TD
   Factory -->|"creates immutable wallets"| Treasury
   Treasury --> State["Funds and authoritative state"]
   Treasury --> Events["Event history"]
-  Events -->|"invalidate and refetch"| Service
+  Events -->|"history and discovery"| Service
 ```
 
-## Class structure
+## Contract class structure
 
 All classes below are implemented. There is no proxy or initialize/upgradeTo entry point.
 
 ```mermaid
 classDiagram
+  class ITreasury {
+    <<interface>>
+  }
+  class ITreasuryFactory {
+    <<interface>>
+  }
+  class ReentrancyGuard {
+    <<OpenZeppelin>>
+  }
+  ITreasury <|.. TreasuryBase
+  ReentrancyGuard <|-- TreasuryBase
   TreasuryBase <|-- TreasuryProposals
   TreasuryProposals <|-- TreasuryGovernance
   TreasuryBase <|-- TreasuryRecovery
   TreasuryGovernance <|-- Treasury
   TreasuryRecovery <|-- Treasury
-  TreasuryFactory ..> Treasury : creates
-  WalletService ..> Treasury : ABI calls
-  WalletService ..> TreasuryFactory : creation and discovery
+  ITreasuryFactory <|.. TreasuryFactory
+  TreasuryFactory ..> Treasury : new Treasury(config)
   TreasuryBase : owners and guardians
   TreasuryBase : membership generations
   TreasuryBase : thresholds, limits, delays
   TreasuryBase : receive()
   TreasuryBase : getConfig()
+  TreasuryBase : cancelThreshold()
+  TreasuryBase : spentToday() / remainingToday()
+  TreasuryBase : #_replaceOwner()
   TreasuryProposals : proposePayment()
   TreasuryProposals : proposeAction()
   TreasuryProposals : approve()
@@ -51,17 +69,90 @@ classDiagram
   TreasuryProposals : voteCancel()
   TreasuryProposals : execute()
   TreasuryProposals : liveApprovals()
-  TreasuryGovernance : _validateAction()
-  TreasuryGovernance : _applyAction()
+  TreasuryProposals : cancelVotes()
+  TreasuryProposals : #_validateAction() virtual
+  TreasuryProposals : #_applyAction() virtual
+  TreasuryGovernance : #_validateAction() override
+  TreasuryGovernance : #_applyAction() override
   TreasuryRecovery : initiateRecovery()
   TreasuryRecovery : approveRecovery()
   TreasuryRecovery : confirmRecovery()
   TreasuryRecovery : cancelRecovery()
   TreasuryRecovery : voteCancelRecovery()
   TreasuryRecovery : executeRecovery()
+  TreasuryRecovery : liveRecoveryApprovals()
+  TreasuryRecovery : activeRecoveryFor()
+  TreasuryRecovery : isRecoveryTargetCurrent()
   TreasuryFactory : createWallet()
   TreasuryFactory : walletsOf()
+  TreasuryFactory : deployedAtBlock()
 ```
+
+`TreasuryProposals` declares the action hooks and reverts `InvalidAction` by default;
+`TreasuryGovernance` implements them for the nine non-payment action types. Governance
+`ReplaceOwner` and guardian recovery both end in the shared `_replaceOwner` helper.
+
+## Frontend module structure
+
+```mermaid
+classDiagram
+  class WalletService {
+    <<interface>>
+  }
+  App --> WalletService : reads, previews, writes
+  App ..> params : action fields, formatting, validateConfig
+  App ..> safety : configurationWarnings, previewGovernanceConfig
+  WalletService <|.. RealWalletService
+  WalletService <|.. MockWalletService
+  RealWalletService ..> rpcRetry : withMissingBlockRetry
+  RealWalletService ..> errors : toTxError
+  RealWalletService ..> params : encode/decode params
+  RealWalletService ..> ABIs : Treasury, TreasuryFactory
+  App : Overview, PaymentForm, ProposalList/Card
+  App : Governance, RecoveryForm/Card
+  App : CreateWallet, History
+  WalletService : connect(), listWallets(), snapshot()
+  WalletService : listProposals(), listRecoveries(), getHistory()
+  WalletService : preview(), subscribe(), onAccountOrChainChange()
+  WalletService : write methods (simulate, sign, confirm)
+```
+
+`createWalletService` in `src/services/index.js` returns the mock when `VITE_USE_MOCK=true`.
+Components never import ethers or ABI files. `walletService.types.js` documents the
+boundary, including the UI-only `Ready` and `Invalidated` view statuses.
+
+## Deposit sequence
+
+```mermaid
+sequenceDiagram
+  participant D as Depositor (any account)
+  participant UI as React + service
+  participant MM as MetaMask
+  participant T as Treasury
+  D->>UI: Enter deposit amount
+  alt amount is zero or not a number
+    UI-->>D: Validation error, nothing sent
+  else valid
+    UI->>T: Simulate plain ETH transfer (eth_call)
+    alt simulation fails
+      T-->>UI: Error shown, no signature requested
+    else simulation succeeds
+      UI->>MM: Request signature for ETH transfer
+      alt user rejects
+        MM-->>UI: USER_REJECTED
+      else signed
+        MM->>T: Send ETH with empty calldata
+        T->>T: receive() adds ETH to balance
+        T-->>UI: Deposited(from, amount)
+        UI->>UI: Wait 1 confirmation, then reread balance
+      end
+    end
+  end
+```
+
+Deposits are plain ETH transfers handled by `receive()`, not a proposal. Anyone can
+deposit: no role check, approval, timelock or cap applies. Only spending ETH out needs
+owner approval.
 
 ## Payment sequence
 
@@ -122,6 +213,8 @@ sequenceDiagram
   else M other owners veto
     O->>T: voteCancelRecovery
     T-->>UI: RecoveryCancelled at threshold
+  else target removed or replaced by governance
+    T-->>UI: isRecoveryTargetCurrent false, UI shows Invalidated
   else expires
     T-->>UI: Getter derives Expired
   else delay passed and current rules hold
@@ -130,7 +223,8 @@ sequenceDiagram
   end
 ```
 
-The new owner may also execute recovery. Guardians never transfer funds or directly change
+The new owner may also execute recovery. Execution requires the new owner's confirmation
+(`NewOwnerNotConfirmed` otherwise). Guardians never transfer funds or directly change
 thresholds, limits, or other guardians.
 
 ## State machines
@@ -152,7 +246,68 @@ stateDiagram-v2
 Proposals and recoveries use independent arrays, vote mappings and timers with this shape.
 Recovery additionally requires confirmation by the replacement address and supports direct
 target cancellation. Ready is a UI label for Queued with a completed timelock, not a stored
-status. Expired is also derived. Failed execution leaves the preceding state unchanged.
+status. Invalidated is a UI label for an active recovery whose target is no longer the
+current owner generation. Expired is also derived. Failed execution leaves the preceding
+state unchanged.
+
+## Data freshness
+
+```mermaid
+sequenceDiagram
+  participant App as React App
+  participant S as WalletService
+  participant RPC
+  participant MM as MetaMask
+  App->>S: subscribe(wallet, onInvalidate)
+  loop new block, window focus, or 30 s heartbeat
+    S-->>App: onInvalidate (150 ms debounce)
+    App->>S: snapshot, listProposals, listRecoveries, getHistory
+    S->>RPC: reads pinned to one block
+  end
+  MM-->>S: accountsChanged / chainChanged / disconnect
+  S-->>App: onAccountOrChainChange, clear view and reload
+  App->>S: listWallets after each confirmed transaction
+```
+
+- Every wallet event lands in a new block, so the block subscription alone triggers
+  refreshes; there is no separate log filter. The heartbeat is a 30 s fallback for stalled
+  block polling. Sepolia polls every 4 s, Ganache every 2 s.
+- Reads in one refresh are pinned to a single block. `getCode` and `getConfig` are cached
+  per wallet and block hash, so a snapshot and both lists share one read.
+- The provider uses `staticNetwork`; the RPC chain ID is checked once and MetaMask's chain
+  on each write (`WRONG_NETWORK` on mismatch).
+- `rpcRetry.js` retries only `block not found` / `header not found` errors (up to 4
+  attempts with backoff). Load-balanced public RPCs can route a read pinned to the newest
+  block to a node that has not imported it yet.
+- Because state is reread rather than replayed from events, events missed while offline
+  are recovered on the next block, focus or reconnect.
+
+## Deployment and CI
+
+```mermaid
+flowchart LR
+  subgraph Developer
+    Deploy["npm run deploy -- --network sepolia"] --> Records["deployments/11155111.json<br>public/deployments/11155111.json"]
+    Deploy --> Etherscan["verify:etherscan"]
+  end
+  subgraph CI["ci.yml: job verify (every push and PR)"]
+    Lint["lint"] --> Test["npm test"] --> Build["build"] --> Drift["ABI drift check"] --> Browser["test:browser (Playwright)"]
+  end
+  subgraph Pages["pages.yml (push to main)"]
+    Check{"Sepolia record exists?"} -->|yes| VerifyDep["verify:deployment"] --> PagesBuild["build for 11155111"] --> Publish["GitHub Pages"]
+    Check -->|no| Skip["skip publish"]
+  end
+  Records --> Check
+```
+
+- CI holds no keys and sends no transactions. Contract deployment is a manual, one-time
+  command (see DECISIONS.md and the README's Public deployment section).
+- `verify:deployment` compares the deployed runtime bytecode with the current build,
+  checks the deployment record and wallet provenance, and confirms Etherscan source
+  verification when `ETHERSCAN_API_KEY` is set. A mismatch blocks publishing.
+- The current Sepolia record lists the factory, its deployment block (used as the
+  discovery scan start) and a demo wallet. Contracts are immutable: any Solidity change
+  requires a redeploy and new records.
 
 ## Design rationale
 
@@ -162,8 +317,10 @@ status. Expired is also derived. Failed execution leaves the preceding state unc
 | Live, generation-aware approvals | Removed/replaced/rejoined accounts must not retain stale voting power | Iterates at most 20 current members |
 | Separate guardian state machine | Recover lost access without granting guardians spending rights | Longer delay, cancellation monitoring and new-account confirmation |
 | WalletService facade | Keep RPC, ABI decoding and signing out of components | Additional abstraction and integration tests |
-| Events invalidate storage reads | Recover from missed events and reconnects | More RPC reads; large histories eventually need indexing |
+| Blocks invalidate, storage reads are authoritative | Recover from missed events and reconnects | More RPC reads per block; large histories eventually need indexing |
 | Typed governance actions | Prevent arbitrary call execution and enable readable previews | Adding action types requires a new immutable implementation |
+| Warnings instead of minimum thresholds | Keep the specification's valid configurations (M=1, K=1, M=N, K=G) | Protection relies on users reading frontend warnings |
+| Manual deploy, automated verification | CI never holds a deployer key | Deployment depends on one maintainer committing the records |
 
 
 ## Milestone 4 semantics and interfaces
@@ -220,24 +377,36 @@ Generation changes invalidate old approvals and cancellation votes for both owne
 guardian roles. The mock marks recovery targets invalid when owner membership is removed
 or replaced and exposes the same display fields; it remains a UI fixture, not an EVM clone.
 
-### Discovery, freshness and risk guidance
+### Discovery
 
-The factory's `walletsOf` index is historical. The service scans WalletCreated events in
-adaptive chunks, then checks current member roles at a common block. Thus members added
-through governance/recovery can discover wallets without local storage. The UI refreshes
-discovery as selected-wallet blocks advance and on account/wallet changes; reconnect or
-manual selection refreshes it when no wallet is selected. Other-factory wallets require
-manual address entry. Full scans are acceptable for this local course-sized dataset;
-production indexing, caching, and chain-reorganization handling are deferred.
+The factory's `walletsOf` index is historical. The service scans WalletCreated events
+from the factory's deployment block (taken from the deployment record when present), then
+checks current owner/guardian roles in parallel at a common block. Members added through
+governance or recovery can therefore discover wallets without local storage. Discovery
+reruns on account or wallet change and after each confirmed transaction, not on every
+block.
 
-Warnings on creation, overview, recovery and relevant governance settings explain M=1,
-M=N (no possible M-other-owner veto), and K=G (no spare guardian). Loss of guardian quorum
-requires owner governance while an owner quorum is still available. A stolen target key
-can veto guardian recovery, so a remaining owner quorum must replace that address through
-governance. There is no bypass if both quorums become inaccessible. The interface cannot
-detect whether a private key is actually lost; it explains the limits without claiming
-an unavailable-key detector or adding a privileged administrator.
+Factory and wallet-history scans are incremental: each fetches only new blocks and rereads
+the last 5 in case of a shallow reorganization. Scan results and deployment blocks are
+held in memory, so each page load scans from deployment once. Other-factory wallets require
+manual address entry. A cache that persists across page loads, deep-reorg handling and a
+production indexer are deferred.
 
-## Governance warning previews
+### Risk guidance
 
-Configuration warnings evaluate the proposed member lists for AddOwner, RemoveOwner, ReplaceOwner, AddGuardian and RemoveGuardian, as well as threshold changes. A removal that makes M=N or K=G therefore warns before signing. K=1 warns that a single guardian can authorize recovery while retaining delay, replacement-confirmation and cancellation requirements. These are UI previews; contract validation remains authoritative.
+Warnings on creation, overview, recovery and governance previews explain M=1 (one owner
+can authorize everything), K=1 (one guardian can authorize recovery), M=N (no possible
+M-other-owner veto) and K=G (no spare guardian). Loss of guardian quorum requires owner
+governance while an owner quorum is still available. A stolen target key can veto guardian
+recovery, so a remaining owner quorum must replace that address through governance. There
+is no bypass if both quorums become inaccessible. The interface cannot detect whether a
+private key is actually lost; it explains the limits without claiming an unavailable-key
+detector or adding a privileged administrator.
+
+Configuration warnings evaluate the proposed configuration (`previewGovernanceConfig`) for
+AddOwner, RemoveOwner, ReplaceOwner, AddGuardian, RemoveGuardian and threshold changes, so
+a removal that makes M=N or K=G warns before signing. These are UI previews; contract
+validation remains authoritative.
+
+Security scenarios and their tests are listed in SECURITY_SCENARIOS_M4.md; trade-offs and
+remaining risks are in TRADEOFFS_RISKS_M4.md.
