@@ -134,3 +134,22 @@ test('fresh service rereads missed external changes without receiving transactio
   assert.equal(after.me.account,f.accounts[2]);assert.equal((await reconnected.listProposals(address))[0].approvals.by[0],f.accounts[1]);
  }finally{f.provider.destroy();await f.rpc.disconnect();}
 });
+
+test('history scan retries pruned-node log errors without shrinking the range, and grows back after halving',async()=>{
+ const f=await setup();try{
+  // publicnode mixes pruned and archive nodes: the same eth_getLogs fails or succeeds by node.
+  const pruned=()=>Object.assign(new Error('could not coalesce error'),{code:'UNKNOWN_ERROR',error:{code:4444,message:'pruned history unavailable'}});
+  for(let i=0;i<16;i++)await f.rpc.request({method:'evm_mine',params:[]});
+  const ranges=[];let n=0;
+  const getLogs=f.provider.getLogs.bind(f.provider);
+  const provider=new Proxy(f.provider,{get:(t,k)=>k==='getLogs'?async q=>{ranges.push(q.toBlock-q.fromBlock+1);n++;if(n%2===1)throw pruned();if(n===4)throw new Error('query exceeds max block range');return getLogs(q);}:(typeof t[k]==='function'?t[k].bind(t):t[k])});
+  const api=createWalletService({provider,chainId:1337,retryDelayMs:1,maxLogRange:4,storage:{getItem:()=>null,setItem:()=>{}}});
+  const history=await api.getHistory(f.wallet.target);
+  assert.ok(history.length>0,'history still loads despite every other request hitting a pruned node');
+  assert.equal(ranges[1],ranges[0],'a pruned-node error retries the same range');
+  assert.equal(ranges[4],ranges[3]/2,'a range-like error still halves');
+  assert.ok(ranges.slice(5).includes(4),'the range grows back after a success');
+  const always=createWalletService({provider:new Proxy(f.provider,{get:(t,k)=>k==='getLogs'?async()=>{throw pruned();}:(typeof t[k]==='function'?t[k].bind(t):t[k])}),chainId:1337,retryDelayMs:1,storage:{getItem:()=>null,setItem:()=>{}}});
+  await assert.rejects(always.getHistory(f.wallet.target),e=>e.code==='PRUNED_HISTORY'&&/full log history/.test(e.message));
+ }finally{f.provider.destroy();await f.rpc.disconnect();}
+});
